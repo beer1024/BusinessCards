@@ -4,6 +4,7 @@ import socketserver
 import json
 import os
 import re
+import string
 import traceback
 
 API_KEY = os.environ.get("GROQ_API_KEY", "")
@@ -153,9 +154,10 @@ def _starts_with_phrase(lower, phrase):
     """True if `lower` begins with `phrase` as whole words — not just a
     matching prefix of characters. Plain str.startswith("no") would treat
     "nonya@bidness.com" as starting with "no", which is wrong; this checks
-    word-by-word instead."""
+    word-by-word instead. Each word has surrounding punctuation stripped
+    first, so "no," / "no." / "no!" etc. still count as the word "no"."""
     phrase_words = phrase.split()
-    words = lower.split()
+    words = [w.strip(string.punctuation) for w in lower.split()]
     return words[:len(phrase_words)] == phrase_words
 
 
@@ -717,6 +719,124 @@ def handle_sides_gate(user_message, current_spec):
     return reply, spec_update
 
 
+# ---------------------------------------------------------------------------
+# LOGO GATE — the second closed-ended decision, reached once card_sides ==
+# "two". Same pattern as the sides gate: Python owns the question and the
+# resulting state, the LLM only classifies intent, and anything ambiguous
+# gets a clarifying re-ask instead of a guess. This is what fixes the
+# "agent gives up and moves on" failure mode — a double-negative like "no,
+# I don't want to skip it" was previously handled inside the big open-ended
+# creative chat and got misread as declining the logo.
+# ---------------------------------------------------------------------------
+
+LOGO_INTENT_SYSTEM_PROMPT = """
+You are an intent classifier for a single either/or question in a business
+card design tool: "Do you have a logo you'd like to use, or would you like
+a text-only design instead?"
+
+Respond with ONLY this JSON shape, nothing else:
+{
+  "intent": "has_logo" | "no_logo" | "off_topic",
+  "reply_to_user": ""
+}
+
+Rules:
+- "has_logo": the customer has a logo and wants to use it, in any wording
+  ("yes I have one", "I'll upload it", "I have a logo", "yeah", "of
+  course" in response to being asked if they want to use their logo).
+  IMPORTANT — watch for double negatives: "no, I don't want to skip it"
+  means they do NOT want to skip the logo, i.e. they want to use it — that
+  is "has_logo", not "no_logo". Read the whole sentence, don't just react
+  to the first word.
+- "no_logo": the customer doesn't have a logo, or wants to skip it and go
+  text-only, in any wording ("no logo", "skip it", "text-only please",
+  "don't have one").
+- "off_topic": the customer asked a question, made small talk, expressed
+  confusion, or said something that doesn't clearly answer the question
+  (e.g. "do I have a logo?", "what's a logo", "does it matter?"). Write a
+  short, friendly "reply_to_user" that briefly clarifies/answers what they
+  said, then ends by asking: "Do you have a logo you'd like to use, or
+  would you like a text-only design instead?" (verbatim). Never guess
+  has_logo/no_logo here — if there's any doubt, use off_topic.
+"""
+
+HAS_LOGO_WORDS = {
+    "yes", "yeah", "yep", "yup", "i have one", "i have a logo",
+    "i'll upload it", "ill upload it", "sure", "of course",
+}
+NO_LOGO_WORDS = {
+    "no", "nope", "no logo", "skip it", "skip", "text only", "text-only",
+    "dont have one", "don't have one", "i don't have one", "none",
+}
+
+
+def _logo_fallback(user_message):
+    """Deterministic fallback used only if the LLM call fails. Simple
+    keyword matching can't reliably resolve double negatives, so anything
+    containing an explicit negation word alongside "skip" is treated as
+    off_topic rather than guessed at."""
+    lower = user_message.lower().strip(" .!")
+    if "skip" in lower and any(neg in lower for neg in ("don't", "dont", "not", "no ")):
+        # e.g. "no I don't want to skip it" — too risky to guess, ask again.
+        return {"intent": "off_topic", "reply_to_user": LOGO_GATE_QUESTION}
+    if lower in HAS_LOGO_WORDS or any(_starts_with_phrase(lower, w) for w in HAS_LOGO_WORDS):
+        return {"intent": "has_logo", "reply_to_user": ""}
+    if lower in NO_LOGO_WORDS or any(_starts_with_phrase(lower, w) for w in NO_LOGO_WORDS):
+        return {"intent": "no_logo", "reply_to_user": ""}
+    return {"intent": "off_topic", "reply_to_user": LOGO_GATE_QUESTION}
+
+
+def interpret_logo_reply(user_message):
+    if not client:
+        raise RuntimeError("GROQ_API_KEY is missing or empty")
+
+    messages = [
+        {"role": "system", "content": LOGO_INTENT_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Customer: {user_message}"},
+    ]
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+        timeout=15,
+    )
+    raw = completion.choices[0].message.content.strip()
+    result = json.loads(raw)
+    if result.get("intent") not in {"has_logo", "no_logo", "off_topic"}:
+        raise ValueError("Model returned an unrecognized intent")
+    return result
+
+
+def handle_logo_gate(user_message, current_spec):
+    try:
+        result = interpret_logo_reply(user_message)
+    except Exception as e:
+        print(f"Logo-gate LLM interpretation failed, using fallback: {e}")
+        result = _logo_fallback(user_message)
+
+    intent = result.get("intent")
+    spec_update = dict(current_spec)
+
+    if intent == "off_topic":
+        spec_update["logo_declined"] = None
+        reply = result.get("reply_to_user") or LOGO_GATE_QUESTION
+        return reply, spec_update
+
+    if intent == "has_logo":
+        spec_update["logo_declined"] = False
+        reply = "Great — go ahead and upload it whenever you're ready."
+        return reply, spec_update
+
+    # intent == "no_logo"
+    spec_update["logo_declined"] = True
+    spec_update["front_layout"] = "Text-only front — no logo"
+    reply = ("No problem — we'll do a text-only front instead. Want your "
+              "business name set in bold lettering as the centerpiece, or "
+              "would you like to describe a style you have in mind?")
+    return reply, spec_update
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/api/chat":
@@ -734,9 +854,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             logo_uploaded = data.get("logo_uploaded", False)
             front_locked = data.get("front_locked", False)
             card_sides = current_spec.get("card_sides")
+            logo_declined = current_spec.get("logo_declined")
 
             print(f"\n--- New request ---")
-            print(f"card_sides: {card_sides}, front_locked: {front_locked}")
+            print(f"card_sides: {card_sides}, logo_declined: {logo_declined}, front_locked: {front_locked}")
             print(f"User: {user_message}")
 
             if card_sides is None:
@@ -749,6 +870,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 reply, spec_update = handle_back_side(user_message, current_spec)
             elif front_locked:
                 reply, spec_update = handle_back_side(user_message, current_spec)
+            elif logo_declined is None:
+                # Two-sided, but we don't yet know if there's a logo —
+                # resolve that closed question before any creative chat.
+                reply, spec_update = handle_logo_gate(user_message, current_spec)
             else:
                 reply, spec_update = handle_front_side(
                     user_message, current_spec, logo_uploaded
@@ -793,5 +918,5 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)) or ".")
     with ThreadingHTTPServer(("", PORT), Handler) as httpd:
-        print(f"Server running → http://localhost:{PORT}")
+        print(f"Server running -> http://localhost:{PORT}")
         httpd.serve_forever()

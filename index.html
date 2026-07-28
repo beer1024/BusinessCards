@@ -181,6 +181,12 @@ function isBackToFrontRequest(text) {
 const state = {
     activeSide: 'front',
     front_locked: false,
+    // A one-step-back (and named-target) undo history for the freeform
+    // front-design chat, since that stage has no per-field gate of its own.
+    // Each entry: { label, spec } where spec is a snapshot of the
+    // front-relevant fields as they were *before* the change described by
+    // label took effect.
+    frontHistory: [],
     design_spec: {
         card_sides: null,
         front_orientation: null,
@@ -210,6 +216,161 @@ const state = {
     originalImageUrl: null,
     image_uploaded: false
 };
+
+// ---------------------------------------------------------------------------
+// FRONT-DESIGN UNDO — the front-design chat (full bleed, resize, reposition,
+// style) is a freeform LLM conversation with no memory of the prior state.
+// We keep a lightweight local history of snapshots here so "go back"/"undo"
+// (one step) and "undo the full bleed" (a named step) can be handled
+// instantly and deterministically, without asking the model to guess.
+// ---------------------------------------------------------------------------
+
+const FRONT_RELEVANT_FIELDS = [
+    'front_layout', 'style_vibe', 'image_fit', 'image_scale',
+    'image_position_x', 'image_position_y', 'background_mode',
+    'background_color', 'has_lace_accents'
+];
+
+function snapshotFrontFields(spec) {
+    const snap = {};
+    FRONT_RELEVANT_FIELDS.forEach(k => { snap[k] = spec[k]; });
+    return snap;
+}
+
+// Each category pairs a human label (for confirmations) with keywords used
+// to match a *named* undo request ("undo the full bleed") to the right past
+// change. Checked in order, most specific first. Note: whether the customer
+// has an image at all (image_declined) is intentionally NOT one of these —
+// that's a gate decision owned by the server's global edit-request check
+// (change_image), which properly resets it and re-asks the image question;
+// local undo here only ever touches front-design tweaks. front_layout is
+// also not its own category — it's a short LLM-written description that's
+// regenerated on nearly every turn, even trivial ones, so treating it as a
+// change trigger on its own would create noisy phantom undo entries; it's
+// still included in each snapshot so a real undo restores it too.
+const FRONT_CHANGE_CATEGORIES = [
+    { id: 'bleed', label: 'made it full-bleed (edge-to-edge)',
+      keywords: ['full bleed', 'full-bleed', 'edge to edge', 'edge-to-edge', 'bleed', 'cover'] },
+    { id: 'contain', label: 'put the white border back (no longer full-bleed)',
+      keywords: ['border', 'contain', 'no bleed', 'not full bleed'] },
+    { id: 'position', label: 'repositioned the image',
+      keywords: ['position', 'reposition', 'move', 'moved', 'left', 'right', 'top', 'bottom', 'centered'] },
+    { id: 'scale', label: 'resized the image',
+      keywords: ['resize', 'resized', 'bigger', 'smaller', 'scale', 'size'] },
+    { id: 'background', label: 'changed the background',
+      keywords: ['background', 'color', 'colour'] },
+    { id: 'style', label: 'updated the style',
+      keywords: ['style', 'vibe', 'look'] },
+];
+
+function categoryLabel(id) {
+    const cat = FRONT_CHANGE_CATEGORIES.find(c => c.id === id);
+    return cat ? cat.label : 'made that change';
+}
+
+// Figures out, from a before/after diff, which single category best
+// describes what just changed (checked in priority order — the most
+// semantically significant field wins if several changed at once).
+function deriveFrontChangeCategory(oldFields, newFields) {
+    if (oldFields.image_fit !== newFields.image_fit) {
+        return newFields.image_fit === 'cover' ? 'bleed' : 'contain';
+    }
+    if (oldFields.image_position_x !== newFields.image_position_x ||
+        oldFields.image_position_y !== newFields.image_position_y) {
+        return 'position';
+    }
+    if (oldFields.image_scale !== newFields.image_scale) {
+        return 'scale';
+    }
+    if (oldFields.background_mode !== newFields.background_mode ||
+        oldFields.background_color !== newFields.background_color) {
+        return 'background';
+    }
+    if (oldFields.style_vibe !== newFields.style_vibe) {
+        return 'style';
+    }
+    return null; // nothing front-relevant actually changed this turn
+}
+
+// True only during the freeform front-design chat stage: sides, orientation
+// and the image yes/no question are all resolved, and the front isn't
+// locked yet. This is exactly the stage route_conversation would send to
+// handle_front_side, and the only stage frontHistory applies to.
+function isFrontDesignStage() {
+    const ds = state.design_spec;
+    return ds.card_sides === 'two' && ds.front_orientation !== null &&
+        ds.image_declined !== null && !state.front_locked;
+}
+
+const BARE_UNDO_PHRASES = [
+    'go back', 'undo that', 'undo it', 'undo', 'never mind', 'nevermind',
+    'revert that', 'revert', 'back up', 'undo the last change', 'undo last',
+];
+
+// If the message actually names a sides/orientation/image-decision concept,
+// it belongs to the server's global edit-request check instead (which owns
+// resetting those and re-asking the right gate question) — local undo here
+// must not swallow it first just because it also contains "go back"/"undo".
+const NON_FRONT_UNDO_CONCEPTS = [
+    'landscape', 'portrait', 'orientation', 'sideways',
+    'one-sided', 'one sided', 'two-sided', 'two sided',
+    'single-sided', 'single sided', 'double-sided', 'double sided',
+    'one side', 'two side', 'both sides',
+    'have an image', 'have a logo', 'skip the image', 'skip the logo',
+    'no image', 'no logo', 'text-only', 'text only', 'add the image',
+    'image back', "don't want the image", 'without the image',
+];
+
+function isUndoRequest(text) {
+    const lower = text.toLowerCase().trim().replace(/[.!]+$/, '');
+    if (NON_FRONT_UNDO_CONCEPTS.some(k => lower.includes(k))) return false;
+    return BARE_UNDO_PHRASES.some(p => lower === p || lower.includes(p));
+}
+
+function matchFrontHistoryCategory(text) {
+    const lower = text.toLowerCase();
+    for (const cat of FRONT_CHANGE_CATEGORIES) {
+        if (cat.keywords.some(k => lower.includes(k))) return cat.id;
+    }
+    return null;
+}
+
+function restoreFrontSnapshot(spec) {
+    Object.assign(state.design_spec, spec);
+}
+
+// Handles a local front-design undo request without any network call.
+// Returns true if it handled the message (caller should stop), false if
+// this wasn't actually an undo request so the normal flow should continue.
+function tryHandleFrontUndo(text) {
+    if (!isFrontDesignStage() || !isUndoRequest(text)) return false;
+
+    const targetCategory = matchFrontHistoryCategory(text);
+
+    if (targetCategory) {
+        const idx = state.frontHistory.map(e => e.category).lastIndexOf(targetCategory);
+        if (idx === -1) {
+            appendMessage('agent', "I haven't made that kind of change yet, so there's nothing to undo there.");
+            return true;
+        }
+        const entry = state.frontHistory[idx];
+        restoreFrontSnapshot(entry.spec);
+        state.frontHistory = state.frontHistory.slice(0, idx);
+        appendMessage('agent', `Got it — back to before I ${entry.label}.`);
+        render();
+        return true;
+    }
+
+    if (state.frontHistory.length === 0) {
+        appendMessage('agent', "There's nothing to undo yet — try making a change first, like asking for full bleed.");
+        return true;
+    }
+    const entry = state.frontHistory.pop();
+    restoreFrontSnapshot(entry.spec);
+    appendMessage('agent', `Got it — back to before I ${entry.label}.`);
+    render();
+    return true;
+}
 
 function esc(value) {
     return String(value).replace(/[&<>"']/g, ch => ({
@@ -608,9 +769,23 @@ async function callAgent(text) {
         return;
     }
 
+    // "go back"/"undo"/"undo the full bleed" while still designing the
+    // front: handled entirely locally and instantly from frontHistory,
+    // rather than sending it to the model (which has no memory of the
+    // prior state and would just guess at an unrelated reply).
+    if (tryHandleFrontUndo(text)) {
+        return;
+    }
+
     const btn = document.getElementById('sendBtn');
     btn.disabled = true;
     btn.textContent = '…';
+
+    // Capture a "before" snapshot only when this turn is actually going to
+    // be routed to the freeform front-design chat, so we can record what
+    // changed (if anything) once the response comes back.
+    const wasFrontDesignStage = isFrontDesignStage();
+    const preFrontSnapshot = wasFrontDesignStage ? snapshotFrontFields(state.design_spec) : null;
 
     try {
         const res = await fetch('/api/chat', {
@@ -631,6 +806,24 @@ async function callAgent(text) {
                 ...data.design_spec,
                 contact: { ...state.design_spec.contact, ...(data.design_spec.contact || {}) }
             };
+        }
+
+        // Record this turn's front-design change (if anything actually
+        // changed) so a later "go back"/"undo the full bleed" has a real
+        // snapshot to restore instead of nothing to work with.
+        if (wasFrontDesignStage) {
+            const newFrontSnapshot = snapshotFrontFields(state.design_spec);
+            const category = deriveFrontChangeCategory(preFrontSnapshot, newFrontSnapshot);
+            if (category) {
+                state.frontHistory.push({ category, label: categoryLabel(category), spec: preFrontSnapshot });
+            }
+        }
+
+        // A full sides reset (e.g. "actually let's do one-sided instead")
+        // starts the front over from scratch — any old undo history no
+        // longer applies to whatever comes next.
+        if (state.design_spec.card_sides === null) {
+            state.frontHistory = [];
         }
 
         // A one-sided card has no front/image design step — the moment the

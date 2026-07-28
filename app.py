@@ -989,29 +989,38 @@ Respond with ONLY this JSON shape, nothing else:
 
 Rules:
 - "change_sides": ONLY if card_sides is already decided (not null) AND the
-  customer is clearly asking to change the number of sides, in any wording
-  ("actually let's do one-sided instead", "wait, can we make it
-  two-sided", "switch to one side").
+  customer EXPLICITLY names the number of sides while asking to change it,
+  in any wording ("actually let's do one-sided instead", "wait, can we make
+  it two-sided", "switch to one side").
 - "change_orientation": ONLY if an orientation is already decided (front or
-  back is not null) AND the customer is clearly asking to change
-  landscape/portrait, in any wording ("actually make it portrait",
-  "switch to landscape instead", "can we turn it sideways").
+  back is not null) AND the customer EXPLICITLY names landscape/portrait/
+  orientation while asking to change it, in any wording ("actually make it
+  portrait", "switch to landscape instead", "can we turn it sideways").
 - "change_image": ONLY if image_declined is already decided (not null) AND
-  the customer is clearly asking to add/remove/reconsider the image, in any
-  wording ("I do have a logo after all", "actually let's skip the image",
-  "let's not use an image").
+  the customer EXPLICITLY mentions the image/logo/photo while asking to
+  add/remove/reconsider it, in any wording ("I do have a logo after all",
+  "actually let's skip the image", "let's not use an image").
 - "none": anything else — a normal answer to whatever's currently being
   asked, a back-side detail, small talk, or a front-design tweak that
   doesn't touch sides/orientation/image-yes-no. This should be the most
   common answer. If the field in question is still null (not yet decided),
   always answer "none" — that means it's a first-time answer to the
   current question, not a change request.
+- IMPORTANT — vague requests with NO specific concept named: a bare "go
+  back", "undo", "undo that", "undo it", "never mind", "revert", "revert
+  that", or similar, WITHOUT explicitly naming sides/orientation/image, must
+  ALWAYS be "none". Do not guess which earlier decision they mean — only
+  something else (already in progress elsewhere) handles those. Only
+  classify as a change_* intent when the customer names the specific concept
+  (e.g. "undo the two-sided thing", "go back to landscape", "undo the
+  image" DO count; a bare "go back" or "undo" alone does NOT).
 """
 
 CHANGE_TRIGGER_WORDS = (
     "actually", "instead", "change", "switch", "wait", "nevermind",
     "never mind", "i changed my mind", "can we make it", "let's make it",
-    "lets make it", "let's do", "lets do", "reconsider", "go back",
+    "lets make it", "let's do", "lets do", "reconsider", "undo", "revert",
+    "go back to",
 )
 
 

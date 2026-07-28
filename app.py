@@ -24,35 +24,35 @@ PORT = 8000
 
 FRONT_SYSTEM_PROMPT = """
 You are a decisive Creative Director helping a customer design the FRONT of a
-business card. Usually this centers on their uploaded logo, but sometimes the
-customer has no logo and is doing a text-only front instead.
+business card. Usually this centers on their uploaded image, but sometimes the
+customer has no image and is doing a text-only front instead.
 
 You control ONLY these fields:
 - front_layout (a short description of the front layout/composition)
 - style_vibe (a short description of the overall visual style)
-- logo_fit ("contain" or "cover")
-- logo_scale (a number between 0.3 and 1.0, how large the logo appears)
-- logo_position_x ("left", "center", or "right")
-- logo_position_y ("top", "middle", or "bottom")
+- image_fit ("contain" or "cover")
+- image_scale (a number between 0.3 and 1.0, how large the image appears)
+- image_position_x ("left", "center", or "right")
+- image_position_y ("top", "middle", or "bottom")
 - background_mode ("extend", "white", or "solid")
 - background_color (a hex color, only used when background_mode is "solid")
 - has_lace_accents (true/false, decorative accents)
-- logo_declined (true/false — whether the customer is doing a text-only
-  front with no logo)
+- image_declined (true/false — whether the customer is doing a text-only
+  front with no image)
 
-You OWN the logo_declined flag — decide it yourself from the conversation:
+You OWN the image_declined flag — decide it yourself from the conversation:
 - Set it to true the moment the customer indicates, in any wording, that
-  they don't have a logo or want to skip it (e.g. "I don't have one", "skip
-  the logo", "we're text-only", "no logo for now"). When you set it true,
-  don't ask for a logo again — steer the conversation toward typography/text
+  they don't have an image or want to skip it (e.g. "I don't have one", "skip
+  the image", "we're text-only", "no image for now"). When you set it true,
+  don't ask for an image again — steer the conversation toward typography/text
   layout ideas instead, and let reply_to_user acknowledge the switch (e.g.
   offer bold lettering of the business name, or ask about a style they have
   in mind).
 - Set it back to false if the customer later says, in any wording, that they
-  do have a logo after all or want to add one (e.g. "actually I do have a
+  do have an image after all or want to add one (e.g. "actually I do have a
   logo", "found one, hold on") — acknowledge it and invite them to upload it.
 - Otherwise, keep it unchanged from the current design_spec you were given.
-- The "Logo uploaded" flag in the context reflects whether a file was
+- The "Image uploaded" flag in the context reflects whether a file was
   actually uploaded; use it together with the customer's words, not instead
   of them.
 
@@ -65,14 +65,14 @@ Always return ONLY this exact JSON shape, nothing before or after it:
   "design_spec": {
     "front_layout": "",
     "style_vibe": "",
-    "logo_fit": "contain",
-    "logo_scale": 1.0,
-    "logo_position_x": "center",
-    "logo_position_y": "middle",
+    "image_fit": "contain",
+    "image_scale": 1.0,
+    "image_position_x": "center",
+    "image_position_y": "middle",
     "background_mode": "extend",
     "background_color": "#ffffff",
     "has_lace_accents": false,
-    "logo_declined": false
+    "image_declined": false
   }
 }
 """
@@ -568,19 +568,19 @@ def handle_back_side(user_message, current_spec):
     return propose_confirmation(field, extraction, contact)
 
 
-def handle_front_side(user_message, current_spec, logo_uploaded):
+def handle_front_side(user_message, current_spec, image_uploaded):
     if not client:
         raise RuntimeError("GROQ_API_KEY is missing or empty")
 
-    logo_declined = bool(current_spec.get("logo_declined", False))
+    image_declined = bool(current_spec.get("image_declined", False))
 
     messages = [
         {"role": "system", "content": FRONT_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
-                f"Logo uploaded: {logo_uploaded}\n"
-                f"Logo declined: {logo_declined}\n"
+                f"Image uploaded: {image_uploaded}\n"
+                f"Image declined: {image_declined}\n"
                 f"Current design_spec: {json.dumps(current_spec)}\n\n"
                 f"Customer: {user_message}"
             ),
@@ -614,8 +614,8 @@ def handle_front_side(user_message, current_spec, logo_uploaded):
 
 SIDES_GATE_QUESTION = "Would you like a one-sided or two-sided business card?"
 
-LOGO_GATE_QUESTION = (
-    "Do you have a logo you'd like to use, or would you like a text-only "
+IMAGE_GATE_QUESTION = (
+    "Do you have an image you'd like to use, or would you like a text-only "
     "design instead?"
 )
 
@@ -715,62 +715,65 @@ def handle_sides_gate(user_message, current_spec):
 
     # intent == "two"
     spec_update["card_sides"] = "two"
-    reply = f"Two-sided it is. {LOGO_GATE_QUESTION}"
+    reply = f"Two-sided it is. {IMAGE_GATE_QUESTION}"
     return reply, spec_update
 
 
 # ---------------------------------------------------------------------------
-# LOGO GATE — the second closed-ended decision, reached once card_sides ==
+# IMAGE GATE — the second closed-ended decision, reached once card_sides ==
 # "two". Same pattern as the sides gate: Python owns the question and the
 # resulting state, the LLM only classifies intent, and anything ambiguous
 # gets a clarifying re-ask instead of a guess. This is what fixes the
 # "agent gives up and moves on" failure mode — a double-negative like "no,
 # I don't want to skip it" was previously handled inside the big open-ended
-# creative chat and got misread as declining the logo.
+# creative chat and got misread as declining the image.
 # ---------------------------------------------------------------------------
 
-LOGO_INTENT_SYSTEM_PROMPT = """
+IMAGE_INTENT_SYSTEM_PROMPT = """
 You are an intent classifier for a single either/or question in a business
-card design tool: "Do you have a logo you'd like to use, or would you like
+card design tool: "Do you have an image you'd like to use, or would you like
 a text-only design instead?"
 
 Respond with ONLY this JSON shape, nothing else:
 {
-  "intent": "has_logo" | "no_logo" | "off_topic",
+  "intent": "has_image" | "no_image" | "off_topic",
   "reply_to_user": ""
 }
 
 Rules:
-- "has_logo": the customer has a logo and wants to use it, in any wording
-  ("yes I have one", "I'll upload it", "I have a logo", "yeah", "of
-  course" in response to being asked if they want to use their logo).
+- "has_image": the customer has an image (logo, photo, graphic, etc.) and
+  wants to use it, in any wording ("yes I have one", "I'll upload it", "I
+  have a logo", "yeah", "of course" in response to being asked if they want
+  to use an image).
   IMPORTANT — watch for double negatives: "no, I don't want to skip it"
-  means they do NOT want to skip the logo, i.e. they want to use it — that
-  is "has_logo", not "no_logo". Read the whole sentence, don't just react
+  means they do NOT want to skip the image, i.e. they want to use it — that
+  is "has_image", not "no_image". Read the whole sentence, don't just react
   to the first word.
-- "no_logo": the customer doesn't have a logo, or wants to skip it and go
-  text-only, in any wording ("no logo", "skip it", "text-only please",
-  "don't have one").
+- "no_image": the customer doesn't have an image, or wants to skip it and go
+  text-only, in any wording ("no image", "no logo", "skip it", "text-only
+  please", "don't have one").
 - "off_topic": the customer asked a question, made small talk, expressed
   confusion, or said something that doesn't clearly answer the question
-  (e.g. "do I have a logo?", "what's a logo", "does it matter?"). Write a
-  short, friendly "reply_to_user" that briefly clarifies/answers what they
-  said, then ends by asking: "Do you have a logo you'd like to use, or
-  would you like a text-only design instead?" (verbatim). Never guess
-  has_logo/no_logo here — if there's any doubt, use off_topic.
+  (e.g. "do I have an image?", "what counts as an image", "does it
+  matter?"). Write a short, friendly "reply_to_user" that briefly
+  clarifies/answers what they said, then ends by asking: "Do you have an
+  image you'd like to use, or would you like a text-only design instead?"
+  (verbatim). Never guess has_image/no_image here — if there's any doubt,
+  use off_topic.
 """
 
-HAS_LOGO_WORDS = {
+HAS_IMAGE_WORDS = {
     "yes", "yeah", "yep", "yup", "i have one", "i have a logo",
-    "i'll upload it", "ill upload it", "sure", "of course",
+    "i have an image", "i'll upload it", "ill upload it", "sure", "of course",
 }
-NO_LOGO_WORDS = {
-    "no", "nope", "no logo", "skip it", "skip", "text only", "text-only",
-    "dont have one", "don't have one", "i don't have one", "none",
+NO_IMAGE_WORDS = {
+    "no", "nope", "no logo", "no image", "skip it", "skip", "text only",
+    "text-only", "dont have one", "don't have one", "i don't have one",
+    "none",
 }
 
 
-def _logo_fallback(user_message):
+def _image_fallback(user_message):
     """Deterministic fallback used only if the LLM call fails. Simple
     keyword matching can't reliably resolve double negatives, so anything
     containing an explicit negation word alongside "skip" is treated as
@@ -778,20 +781,20 @@ def _logo_fallback(user_message):
     lower = user_message.lower().strip(" .!")
     if "skip" in lower and any(neg in lower for neg in ("don't", "dont", "not", "no ")):
         # e.g. "no I don't want to skip it" — too risky to guess, ask again.
-        return {"intent": "off_topic", "reply_to_user": LOGO_GATE_QUESTION}
-    if lower in HAS_LOGO_WORDS or any(_starts_with_phrase(lower, w) for w in HAS_LOGO_WORDS):
-        return {"intent": "has_logo", "reply_to_user": ""}
-    if lower in NO_LOGO_WORDS or any(_starts_with_phrase(lower, w) for w in NO_LOGO_WORDS):
-        return {"intent": "no_logo", "reply_to_user": ""}
-    return {"intent": "off_topic", "reply_to_user": LOGO_GATE_QUESTION}
+        return {"intent": "off_topic", "reply_to_user": IMAGE_GATE_QUESTION}
+    if lower in HAS_IMAGE_WORDS or any(_starts_with_phrase(lower, w) for w in HAS_IMAGE_WORDS):
+        return {"intent": "has_image", "reply_to_user": ""}
+    if lower in NO_IMAGE_WORDS or any(_starts_with_phrase(lower, w) for w in NO_IMAGE_WORDS):
+        return {"intent": "no_image", "reply_to_user": ""}
+    return {"intent": "off_topic", "reply_to_user": IMAGE_GATE_QUESTION}
 
 
-def interpret_logo_reply(user_message):
+def interpret_image_reply(user_message):
     if not client:
         raise RuntimeError("GROQ_API_KEY is missing or empty")
 
     messages = [
-        {"role": "system", "content": LOGO_INTENT_SYSTEM_PROMPT},
+        {"role": "system", "content": IMAGE_INTENT_SYSTEM_PROMPT},
         {"role": "user", "content": f"Customer: {user_message}"},
     ]
     completion = client.chat.completions.create(
@@ -803,34 +806,34 @@ def interpret_logo_reply(user_message):
     )
     raw = completion.choices[0].message.content.strip()
     result = json.loads(raw)
-    if result.get("intent") not in {"has_logo", "no_logo", "off_topic"}:
+    if result.get("intent") not in {"has_image", "no_image", "off_topic"}:
         raise ValueError("Model returned an unrecognized intent")
     return result
 
 
-def handle_logo_gate(user_message, current_spec):
+def handle_image_gate(user_message, current_spec):
     try:
-        result = interpret_logo_reply(user_message)
+        result = interpret_image_reply(user_message)
     except Exception as e:
-        print(f"Logo-gate LLM interpretation failed, using fallback: {e}")
-        result = _logo_fallback(user_message)
+        print(f"Image-gate LLM interpretation failed, using fallback: {e}")
+        result = _image_fallback(user_message)
 
     intent = result.get("intent")
     spec_update = dict(current_spec)
 
     if intent == "off_topic":
-        spec_update["logo_declined"] = None
-        reply = result.get("reply_to_user") or LOGO_GATE_QUESTION
+        spec_update["image_declined"] = None
+        reply = result.get("reply_to_user") or IMAGE_GATE_QUESTION
         return reply, spec_update
 
-    if intent == "has_logo":
-        spec_update["logo_declined"] = False
+    if intent == "has_image":
+        spec_update["image_declined"] = False
         reply = "Great — go ahead and upload it whenever you're ready."
         return reply, spec_update
 
-    # intent == "no_logo"
-    spec_update["logo_declined"] = True
-    spec_update["front_layout"] = "Text-only front — no logo"
+    # intent == "no_image"
+    spec_update["image_declined"] = True
+    spec_update["front_layout"] = "Text-only front — no image"
     reply = ("No problem — we'll do a text-only front instead. Want your "
               "business name set in bold lettering as the centerpiece, or "
               "would you like to describe a style you have in mind?")
@@ -851,13 +854,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
             user_message = data.get("message", "").strip()
             current_spec = data.get("state", {}) or {}
-            logo_uploaded = data.get("logo_uploaded", False)
+            image_uploaded = data.get("image_uploaded", False)
             front_locked = data.get("front_locked", False)
             card_sides = current_spec.get("card_sides")
-            logo_declined = current_spec.get("logo_declined")
+            image_declined = current_spec.get("image_declined")
 
             print(f"\n--- New request ---")
-            print(f"card_sides: {card_sides}, logo_declined: {logo_declined}, front_locked: {front_locked}")
+            print(f"card_sides: {card_sides}, image_declined: {image_declined}, front_locked: {front_locked}")
             print(f"User: {user_message}")
 
             if card_sides is None:
@@ -865,18 +868,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # ahead of any front/back logic.
                 reply, spec_update = handle_sides_gate(user_message, current_spec)
             elif card_sides == "one":
-                # One-sided cards never have a front/logo design — every
+                # One-sided cards never have a front/image design — every
                 # message from here on is back-side detail collection.
                 reply, spec_update = handle_back_side(user_message, current_spec)
             elif front_locked:
                 reply, spec_update = handle_back_side(user_message, current_spec)
-            elif logo_declined is None:
-                # Two-sided, but we don't yet know if there's a logo —
+            elif image_declined is None:
+                # Two-sided, but we don't yet know if there's an image —
                 # resolve that closed question before any creative chat.
-                reply, spec_update = handle_logo_gate(user_message, current_spec)
+                reply, spec_update = handle_image_gate(user_message, current_spec)
             else:
                 reply, spec_update = handle_front_side(
-                    user_message, current_spec, logo_uploaded
+                    user_message, current_spec, image_uploaded
                 )
 
             response = {"reply_to_user": reply, "design_spec": spec_update}

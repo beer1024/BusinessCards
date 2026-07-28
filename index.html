@@ -73,8 +73,8 @@ body { background: var(--bg); color: var(--text); display: flex; height: 100vh; 
     </div>
     <div class="chat-input-area">
         <div class="upload-row">
-            <label for="logoUpload"><strong>Upload Logo:</strong></label>
-            <input type="file" id="logoUpload" accept="image/*">
+            <label for="imageUpload"><strong>Upload Image:</strong></label>
+            <input type="file" id="imageUpload" accept="image/*">
         </div>
         <div class="input-row">
             <input type="text" id="userInput" placeholder="Tell me what to change…" autofocus>
@@ -92,7 +92,7 @@ body { background: var(--bg); color: var(--text); display: flex; height: 100vh; 
     <div class="business-card" id="cardPreview"></div>
     <div class="spec-readout">
         <div><strong>Vibe:</strong> <span id="vibeText">—</span></div>
-        <div><strong>Layout:</strong> <span id="layoutText">Waiting for logo…</span></div>
+        <div><strong>Layout:</strong> <span id="layoutText">Waiting for image…</span></div>
     </div>
     <button class="download-btn" onclick="downloadCard()">Download PNG</button>
 </div>
@@ -139,7 +139,7 @@ const CONFIRM_PHRASES = [
 
 // Short standalone affirmations ("good", "ok", "yep") only count if the
 // whole message is short and there's no negation — otherwise "not good"
-// or "good, but move the logo left" would wrongly trigger a lock.
+// or "good, but move the image left" would wrongly trigger a lock.
 const CONFIRM_WORDS = new Set([
     'good', 'great', 'perfect', 'nice', 'done', 'finished', 'yes', 'yep',
     'yup', 'ok', 'okay', 'correct', 'confirm', 'confirmed', 'ready'
@@ -174,14 +174,14 @@ const state = {
     front_locked: false,
     design_spec: {
         card_sides: null,
-        logo_declined: null,
-        front_layout: 'Waiting for logo',
+        image_declined: null,
+        front_layout: 'Waiting for image',
         back_layout: 'Not started',
         style_vibe: 'Clean professional',
-        logo_fit: 'contain',
-        logo_scale: 1.0,
-        logo_position_x: 'center',
-        logo_position_y: 'middle',
+        image_fit: 'contain',
+        image_scale: 1.0,
+        image_position_x: 'center',
+        image_position_y: 'middle',
         background_mode: 'extend',
         background_color: '#ffffff',
         has_lace_accents: false,
@@ -196,8 +196,8 @@ const state = {
             tagline: null, services: null, cta: null
         }
     },
-    originalLogoUrl: null,
-    logo_uploaded: false
+    originalImageUrl: null,
+    image_uploaded: false
 };
 
 function esc(value) {
@@ -237,7 +237,7 @@ function updateSidesUI() {
     previewHeader.style.display = '';
 
     if (sides === 'one') {
-        // A one-sided card has no front/logo design — it's just the back.
+        // A one-sided card has no front/image design — it's just the back.
         uploadRow.style.display = 'none';
         btnFront.style.display = 'none';
         btnBack.style.display = 'none';
@@ -316,7 +316,7 @@ function sampleEdgeColor(img) {
 }
 
 function buildCardImage(cb) {
-    if (!state.originalLogoUrl) { cb(null); return; }
+    if (!state.originalImageUrl) { cb(null); return; }
 
     const img = new Image();
     img.onload = () => {
@@ -340,7 +340,7 @@ function buildCardImage(cb) {
             ctx.fillRect(0, 0, W, H);
         }
 
-        const fit = ds.logo_fit || 'contain';
+        const fit = ds.image_fit || 'contain';
 
         if (fit === 'cover') {
             const scale = Math.max(W / img.width, H / img.height);
@@ -350,7 +350,7 @@ function buildCardImage(cb) {
             const y = (H - h) / 2;
             ctx.drawImage(img, x, y, w, h);
         } else {
-            const scale = (ds.logo_scale || 1.0);
+            const scale = (ds.image_scale || 1.0);
             const maxW = W * scale;
             const maxH = H * scale;
             const ratio = Math.min(maxW / img.width, maxH / img.height);
@@ -359,17 +359,17 @@ function buildCardImage(cb) {
 
             let x = (W - w) / 2;
             let y = (H - h) / 2;
-            if (ds.logo_position_x === 'left')  x = W * 0.05;
-            if (ds.logo_position_x === 'right') x = W - w - W * 0.05;
-            if (ds.logo_position_y === 'top')   y = H * 0.06;
-            if (ds.logo_position_y === 'bottom') y = H - h - H * 0.06;
+            if (ds.image_position_x === 'left')  x = W * 0.05;
+            if (ds.image_position_x === 'right') x = W - w - W * 0.05;
+            if (ds.image_position_y === 'top')   y = H * 0.06;
+            if (ds.image_position_y === 'bottom') y = H - h - H * 0.06;
 
             ctx.drawImage(img, x, y, w, h);
         }
 
         cb(canvas.toDataURL('image/png'));
     };
-    img.src = state.originalLogoUrl;
+    img.src = state.originalImageUrl;
 }
 
 function buildBackCardImage(cb) {
@@ -459,7 +459,7 @@ function render() {
 
     updateProgress();
 
-    if (state.activeSide === 'front' && state.logo_uploaded) {
+    if (state.activeSide === 'front' && state.image_uploaded) {
         buildCardImage((url) => {
             if (!url) return;
             card.style.padding = '0';
@@ -538,11 +538,11 @@ async function callAgent(text) {
     // Front -> back transition is handled entirely client-side: no need to
     // send "looks good" to the model and risk it being misread as an
     // answer to a contact-info question. Only applies once we're actually
-    // in the two-sided front-design chat (both the sides gate and the logo
+    // in the two-sided front-design chat (both the sides gate and the image
     // gate resolved) — otherwise a reply like "ok, two-sided" or a bare
-    // "yes" answering the logo question could be misread as a front-lock
+    // "yes" answering the image question could be misread as a front-lock
     // confirmation.
-    if (state.design_spec.card_sides === 'two' && state.design_spec.logo_declined !== null && !state.front_locked && isFrontConfirmation(text)) {
+    if (state.design_spec.card_sides === 'two' && state.design_spec.image_declined !== null && !state.front_locked && isFrontConfirmation(text)) {
         state.front_locked = true;
         switchSide('back');
         updateEditFrontButtonVisibility();
@@ -569,7 +569,7 @@ async function callAgent(text) {
             body: JSON.stringify({
                 message: text,
                 state: state.design_spec,
-                logo_uploaded: state.logo_uploaded,
+                image_uploaded: state.image_uploaded,
                 front_locked: state.front_locked
             })
         });
@@ -583,7 +583,7 @@ async function callAgent(text) {
             };
         }
 
-        // A one-sided card has no front/logo design step — the moment the
+        // A one-sided card has no front/image design step — the moment the
         // server confirms card_sides === 'one', treat the front as already
         // "locked" so the back-side Q&A and its progress bar behave
         // correctly, and the (nonexistent) front tab stays hidden.
@@ -617,26 +617,26 @@ document.getElementById('userInput').addEventListener('keypress', e => {
     if (e.key === 'Enter') send();
 });
 
-document.getElementById('logoUpload').addEventListener('change', e => {
+document.getElementById('imageUpload').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
-        state.originalLogoUrl = ev.target.result;
-        state.logo_uploaded = true;
-        state.design_spec.front_layout = 'Logo uploaded – ready for adjustments';
-        state.design_spec.logo_fit = 'contain';
+        state.originalImageUrl = ev.target.result;
+        state.image_uploaded = true;
+        state.design_spec.front_layout = 'Image uploaded – ready for adjustments';
+        state.design_spec.image_fit = 'contain';
         state.design_spec.background_mode = 'extend';
-        state.design_spec.logo_scale = 1.0;
+        state.design_spec.image_scale = 1.0;
         render();
-        appendMessage('agent', 'Logo received. Tell me if you want it bigger/smaller, moved, or if the background needs changing.');
+        appendMessage('agent', "Image received! Would you like to adjust the size, reposition it, or make the background full-bleed (edge-to-edge, no white border)?");
         switchSide('front');
     };
     reader.readAsDataURL(file);
 });
 
 function downloadCard() {
-    if (state.activeSide === 'front' && state.logo_uploaded) {
+    if (state.activeSide === 'front' && state.image_uploaded) {
         buildCardImage((url) => {
             const a = document.createElement('a');
             a.download = 'business-card-front.png';
@@ -651,7 +651,7 @@ function downloadCard() {
             a.click();
         });
     } else {
-        alert('Upload a logo first to download the front side.');
+        alert('Upload an image first to download the front side.');
     }
 }
 

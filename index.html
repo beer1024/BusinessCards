@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Business Card Design Studio</title>
+<style>
+:root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --border: #334155;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+body { background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+.chat-container { width: 42%; min-width: 340px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+.chat-header { padding: 18px 20px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+.chat-header span { font-size: 0.75rem; color: var(--accent); background: rgba(56,189,248,.12); padding: 4px 10px; border-radius: 999px; }
+.header-controls { display: flex; align-items: center; gap: 8px; }
+.edit-front-btn { display: none; background: none; border: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.edit-front-btn.visible { display: inline-block; }
+.edit-front-btn:hover { border-color: var(--accent); color: var(--accent); }
+.progress-row { padding: 10px 20px; border-bottom: 1px solid var(--border); font-size: 0.78rem; color: var(--muted); display: none; }
+.progress-row.visible { display: block; }
+.progress-bar-track { margin-top: 6px; height: 5px; background: #0f172a; border-radius: 999px; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
+.chat-messages { flex: 1; padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.message { max-width: 88%; padding: 12px 16px; border-radius: 12px; line-height: 1.45; font-size: 0.92rem; white-space: pre-line; }
+.message.agent { background: #334155; align-self: flex-start; border-left: 3px solid var(--accent); }
+.message.user { background: var(--accent); color: #0f172a; align-self: flex-end; font-weight: 500; }
+.chat-input-area { padding: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.upload-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.82rem; color: var(--muted); background: #0f172a; padding: 10px 12px; border-radius: 8px; border: 1px dashed var(--border); }
+.upload-row input[type=file] { color: var(--text); font-size: 0.8rem; max-width: 180px; }
+.input-row { display: flex; gap: 8px; }
+.input-row input[type=text] { flex: 1; padding: 11px 14px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 0.92rem; }
+.input-row input[type=text]:focus { outline: none; border-color: var(--accent); }
+.input-row button, .download-btn { padding: 0 18px; background: var(--accent); color: #0f172a; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
+.input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.preview-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px 20px; position: relative; }
+.preview-header { position: absolute; top: 24px; display: flex; gap: 8px; }
+.side-toggle-btn { background: #334155; color: var(--text); border: 1px solid var(--border); padding: 7px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem; }
+.side-toggle-btn.active { background: var(--accent); color: #0f172a; border-color: var(--accent); }
+.card-label { position: absolute; top: 72px; font-size: 0.75rem; color: var(--muted); letter-spacing: 1.4px; text-transform: uppercase; font-weight: 700; }
+.business-card { width: 480px; height: 274px; border-radius: 12px; box-shadow: 0 25px 50px -12px rgb(0 0 0 / .65); position: relative; overflow: hidden; background: #fff; }
+.spec-readout { position: absolute; bottom: 24px; width: min(420px, 90%); background: rgba(30,41,59,.88); border: 1px solid var(--border); padding: 12px 16px; border-radius: 10px; font-size: 0.78rem; color: var(--muted); }
+.spec-readout strong { color: var(--text); }
+.download-btn { position: absolute; bottom: 24px; right: 24px; padding: 10px 18px; font-size: 0.85rem; }
+@media (max-width: 900px) {
+    body { flex-direction: column; height: auto; min-height: 100vh; }
+    .chat-container { width: 100%; height: 45vh; }
+    .business-card { width: 340px; height: 194px; }
+}
+</style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="chat-header">
+        Creative Direction Studio
+        <div class="header-controls">
+            <button class="edit-front-btn" id="editFrontBtn" onclick="goBackToFront()">← Edit Front</button>
+            <span>Agent Active</span>
+        </div>
+    </div>
+    <div class="progress-row" id="progressRow">
+        <span id="progressText">0 of 12 details</span>
+        <div class="progress-bar-track"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
+    </div>
+    <div class="chat-messages" id="chatMessages">
+        <div class="message agent">Hello! Would you like a one-sided or two-sided business card?</div>
+    </div>
+    <div class="chat-input-area">
+        <div class="upload-row">
+            <label for="logoUpload"><strong>Upload Logo:</strong></label>
+            <input type="file" id="logoUpload" accept="image/*">
+        </div>
+        <div class="input-row">
+            <input type="text" id="userInput" placeholder="Tell me what to change…" autofocus>
+            <button id="sendBtn">Send</button>
+        </div>
+    </div>
+</div>
+
+<div class="preview-container">
+    <div class="preview-header">
+        <button class="side-toggle-btn active" id="btnFront" onclick="switchSide('front')">Front</button>
+        <button class="side-toggle-btn" id="btnBack" onclick="switchSide('back')">Back</button>
+    </div>
+    <div class="card-label" id="cardSideLabel">Viewing: Front Side</div>
+    <div class="business-card" id="cardPreview"></div>
+    <div class="spec-readout">
+        <div><strong>Vibe:</strong> <span id="vibeText">—</span></div>
+        <div><strong>Layout:</strong> <span id="layoutText">Waiting for logo…</span></div>
+    </div>
+    <button class="download-btn" onclick="downloadCard()">Download PNG</button>
+</div>
+
+<script>
+// Keep this list in sync with BACK_FIELDS in server.py
+const BACK_FIELD_KEYS = [
+    'name', 'title', 'company', 'phone', 'email', 'website',
+    'address', 'social', 'qr_code', 'tagline', 'services', 'cta'
+];
+
+// Keep this in sync with the "question" text in BACK_FIELDS in server.py
+const BACK_FIELD_QUESTIONS = {
+    name: "Do you want your full name on the back?",
+    title: "Do you want a job title on the back?",
+    company: "Do you want a company name on the back?",
+    phone: "Do you want a phone number on the back?",
+    email: "Do you want an email address on the back?",
+    website: "Do you want a website URL on the back?",
+    address: "Do you want a physical address on the back?",
+    social: "Do you want social media handles on the back?",
+    qr_code: "Do you want a QR code on the back?",
+    tagline: "Do you want a tagline or slogan on the back?",
+    services: "Do you want a short list of services on the back?",
+    cta: "Do you want a call-to-action, like 'Call now' or 'Visit us online'?"
+};
+
+function nextBackQuestion() {
+    const c = state.design_spec.contact || {};
+    for (const key of BACK_FIELD_KEYS) {
+        if (c[key] === null || c[key] === undefined) {
+            return BACK_FIELD_QUESTIONS[key];
+        }
+    }
+    return "Looks like the back is already complete! Want to review it, or is it ready to download?";
+}
+
+const CONFIRM_PHRASES = [
+    'looks good', 'look good', 'its good', "it's good", 'thats good', "that's good",
+    'lock it in', 'lock it', 'move to back', 'move on to the back', 'front is good',
+    'looks fine', 'looks great', 'sounds good', 'good to go', "let's do the back",
+    'ready for the back'
+];
+
+// Short standalone affirmations ("good", "ok", "yep") only count if the
+// whole message is short and there's no negation — otherwise "not good"
+// or "good, but move the logo left" would wrongly trigger a lock.
+const CONFIRM_WORDS = new Set([
+    'good', 'great', 'perfect', 'nice', 'done', 'finished', 'yes', 'yep',
+    'yup', 'ok', 'okay', 'correct', 'confirm', 'confirmed', 'ready'
+]);
+
+const NEGATION_MARKERS = ['not', "don't", 'dont', 'but', 'except', 'however', "isn't", 'isnt'];
+
+const BACK_TO_FRONT_PHRASES = [
+    'go back to the front', 'back to the front', 'edit the front',
+    'change the front', 'redo the front', 'go back to front',
+    'front again', 'unlock the front', 'go to the front', 'revisit the front'
+];
+
+function isFrontConfirmation(text) {
+    const lower = text.toLowerCase().trim().replace(/[.!]+$/, '');
+    if (CONFIRM_PHRASES.some(p => lower.includes(p))) return true;
+
+    const hasNegation = NEGATION_MARKERS.some(n => lower.includes(n));
+    if (hasNegation) return false;
+
+    const words = lower.split(/\s+/).filter(Boolean);
+    return words.some(w => CONFIRM_WORDS.has(w));
+}
+
+function isBackToFrontRequest(text) {
+    const lower = text.toLowerCase().trim();
+    return BACK_TO_FRONT_PHRASES.some(p => lower.includes(p));
+}
+
+const state = {
+    activeSide: 'front',
+    front_locked: false,
+    design_spec: {
+        card_sides: null,
+        front_layout: 'Waiting for logo',
+        back_layout: 'Not started',
+        style_vibe: 'Clean professional',
+        logo_fit: 'contain',
+        logo_scale: 1.0,
+        logo_position_x: 'center',
+        logo_position_y: 'middle',
+        background_mode: 'extend',
+        background_color: '#ffffff',
+        has_lace_accents: false,
+        back_complete: false,
+        pending_field: null,
+        pending_stage: null,
+        pending_value: null,
+        // null = not asked yet, "" / false = explicitly skipped, otherwise filled
+        contact: {
+            name: null, title: null, company: null, phone: null, email: null,
+            website: null, address: null, social: null, qr_code: null,
+            tagline: null, services: null, cta: null
+        }
+    },
+    originalLogoUrl: null,
+    logo_uploaded: false
+};
+
+function esc(value) {
+    return String(value).replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+}
+
+function switchSide(side) {
+    state.activeSide = side;
+    document.getElementById('btnFront').classList.toggle('active', side === 'front');
+    document.getElementById('btnBack').classList.toggle('active', side === 'back');
+    document.getElementById('cardSideLabel').textContent = `Viewing: ${side === 'front' ? 'Front' : 'Back'} Side`;
+    render();
+}
+
+function updateEditFrontButtonVisibility() {
+    document.getElementById('editFrontBtn').classList.toggle(
+        'visible', state.front_locked && state.design_spec.card_sides !== 'one'
+    );
+}
+
+function updateSidesUI() {
+    const sides = state.design_spec.card_sides;
+    const uploadRow = document.querySelector('.upload-row');
+    const btnFront = document.getElementById('btnFront');
+    const btnBack = document.getElementById('btnBack');
+    const previewHeader = document.querySelector('.preview-header');
+
+    if (sides === null || sides === undefined) {
+        // Still deciding one-sided vs two-sided — no card exists yet.
+        previewHeader.style.display = 'none';
+        uploadRow.style.display = 'none';
+        return;
+    }
+
+    previewHeader.style.display = '';
+
+    if (sides === 'one') {
+        // A one-sided card has no front/logo design — it's just the back.
+        uploadRow.style.display = 'none';
+        btnFront.style.display = 'none';
+        btnBack.style.display = 'none';
+        if (state.activeSide !== 'back') {
+            state.activeSide = 'back';
+            document.getElementById('cardSideLabel').textContent = 'Viewing: Back Side';
+        }
+    } else {
+        uploadRow.style.display = '';
+        btnFront.style.display = '';
+        btnBack.style.display = '';
+    }
+}
+
+function goBackToFront() {
+    state.front_locked = false;
+    // Clear any in-progress back confirmation, but keep already-answered
+    // contact fields — nothing already locked in gets lost.
+    state.design_spec.pending_field = null;
+    state.design_spec.pending_stage = null;
+    state.design_spec.pending_value = null;
+    switchSide('front');
+    updateEditFrontButtonVisibility();
+    appendMessage('agent', "Sure, let's go back to the front. What would you like to change?");
+}
+
+function updateProgress() {
+    const row = document.getElementById('progressRow');
+    if (!state.front_locked) {
+        row.classList.remove('visible');
+        return;
+    }
+    const c = state.design_spec.contact || {};
+    const answered = BACK_FIELD_KEYS.filter(k => c[k] !== null && c[k] !== undefined).length;
+    const total = BACK_FIELD_KEYS.length;
+    row.classList.add('visible');
+    document.getElementById('progressText').textContent = `${answered} of ${total} details`;
+    document.getElementById('progressFill').style.width = `${(answered / total) * 100}%`;
+}
+
+function sampleEdgeColor(img) {
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    const w = img.width;
+    const h = img.height;
+    const samples = [];
+    const steps = 12;
+
+    for (let i = 0; i <= steps; i++) {
+        const x = Math.floor((w - 1) * (i / steps));
+        samples.push(ctx.getImageData(x, 2, 1, 1).data);
+        samples.push(ctx.getImageData(x, h - 3, 1, 1).data);
+    }
+    for (let i = 0; i <= steps; i++) {
+        const y = Math.floor((h - 1) * (i / steps));
+        samples.push(ctx.getImageData(2, y, 1, 1).data);
+        samples.push(ctx.getImageData(w - 3, y, 1, 1).data);
+    }
+
+    let r = 0, g = 0, b = 0, count = 0;
+    samples.forEach(d => {
+        if (d[3] > 200) {
+            r += d[0];
+            g += d[1];
+            b += d[2];
+            count++;
+        }
+    });
+
+    if (count === 0) return '#ffffff';
+    return `rgb(${Math.round(r / count)}, ${Math.round(g / count)}, ${Math.round(b / count)})`;
+}
+
+function buildCardImage(cb) {
+    if (!state.originalLogoUrl) { cb(null); return; }
+
+    const img = new Image();
+    img.onload = () => {
+        const W = 960, H = 548;
+        const canvas = document.createElement('canvas');
+        canvas.width = W;
+        canvas.height = H;
+        const ctx = canvas.getContext('2d');
+
+        const ds = state.design_spec;
+        const mode = ds.background_mode || 'extend';
+
+        if (mode === 'white') {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, W, H);
+        } else if (mode === 'solid') {
+            ctx.fillStyle = ds.background_color || '#ffffff';
+            ctx.fillRect(0, 0, W, H);
+        } else {
+            ctx.fillStyle = sampleEdgeColor(img);
+            ctx.fillRect(0, 0, W, H);
+        }
+
+        const fit = ds.logo_fit || 'contain';
+
+        if (fit === 'cover') {
+            const scale = Math.max(W / img.width, H / img.height);
+            const w = img.width * scale;
+            const h = img.height * scale;
+            const x = (W - w) / 2;
+            const y = (H - h) / 2;
+            ctx.drawImage(img, x, y, w, h);
+        } else {
+            const scale = (ds.logo_scale || 1.0);
+            const maxW = W * scale;
+            const maxH = H * scale;
+            const ratio = Math.min(maxW / img.width, maxH / img.height);
+            const w = img.width * ratio;
+            const h = img.height * ratio;
+
+            let x = (W - w) / 2;
+            let y = (H - h) / 2;
+            if (ds.logo_position_x === 'left')  x = W * 0.05;
+            if (ds.logo_position_x === 'right') x = W - w - W * 0.05;
+            if (ds.logo_position_y === 'top')   y = H * 0.06;
+            if (ds.logo_position_y === 'bottom') y = H - h - H * 0.06;
+
+            ctx.drawImage(img, x, y, w, h);
+        }
+
+        cb(canvas.toDataURL('image/png'));
+    };
+    img.src = state.originalLogoUrl;
+}
+
+function buildBackCardImage(cb) {
+    const W = 960, H = 548;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    const c = state.design_spec.contact || {};
+    const left = 60;
+    let y = 90;
+
+    if (c.name) {
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '700 34px sans-serif';
+        ctx.fillText(c.name, left, y);
+        y += 40;
+    }
+    if (c.title) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '400 20px sans-serif';
+        ctx.fillText(c.title, left, y);
+        y += 26;
+    }
+    if (c.company) {
+        ctx.fillStyle = '#334155';
+        ctx.font = '600 20px sans-serif';
+        ctx.fillText(c.company, left, y);
+        y += 34;
+    }
+
+    y += 10;
+    ctx.fillStyle = '#334155';
+    ctx.font = '400 18px sans-serif';
+    [c.phone, c.email, c.website, c.address, c.social].filter(Boolean).forEach(line => {
+        ctx.fillText(line, left, y);
+        y += 26;
+    });
+
+    if (c.tagline) {
+        y += 14;
+        ctx.fillStyle = '#475569';
+        ctx.font = 'italic 18px sans-serif';
+        ctx.fillText('"' + c.tagline + '"', left, y);
+        y += 26;
+    }
+    if (c.services) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '400 16px sans-serif';
+        ctx.fillText(c.services, left, y);
+        y += 24;
+    }
+    if (c.cta) {
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '700 18px sans-serif';
+        ctx.fillText(c.cta, left, y);
+        y += 24;
+    }
+    if (c.qr_code) {
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(W - 180, H - 180, 120, 120);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '400 14px sans-serif';
+        ctx.fillText('QR CODE', W - 168, H - 115);
+    }
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '400 14px sans-serif';
+    ctx.fillText('3.5" x 2.0"', W - 130, H - 30);
+
+    cb(canvas.toDataURL('image/png'));
+}
+
+function render() {
+    updateSidesUI();
+    const card = document.getElementById('cardPreview');
+    const ds = state.design_spec;
+
+    document.getElementById('vibeText').textContent = ds.style_vibe || '—';
+    document.getElementById('layoutText').textContent =
+        (state.activeSide === 'front' ? ds.front_layout : ds.back_layout) || '—';
+
+    updateProgress();
+
+    if (state.activeSide === 'front' && state.logo_uploaded) {
+        buildCardImage((url) => {
+            if (!url) return;
+            card.style.padding = '0';
+            card.style.background = '#000';
+            card.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
+        });
+        return;
+    }
+
+    card.style.padding = '24px';
+    card.style.background = '#ffffff';
+
+    if (state.activeSide === 'front') {
+        card.innerHTML = `
+            <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
+                <div>
+                    <h2 style="font-size:1.2rem;font-weight:700;">Front</h2>
+                    <p style="font-size:0.8rem;color:#475569;margin-top:8px;">${esc(ds.front_layout)}</p>
+                </div>
+                <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;">3.5″ × 2.0″</div>
+            </div>`;
+        return;
+    }
+
+    // BACK SIDE
+    const c = ds.contact || {};
+    const lace = ds.has_lace_accents ?
+        `<div style="position:absolute;top:10px;right:12px;opacity:.55;">✨</div>
+         <div style="position:absolute;bottom:10px;left:12px;opacity:.55;">✨</div>` : '';
+
+    let content = '';
+    if (c.name) content += `<div style="font-weight:700;font-size:1.05rem;color:#0f172a;margin-bottom:2px;">${esc(c.name)}</div>`;
+    if (c.title) content += `<div style="color:#64748b;font-size:0.82rem;margin-bottom:2px;">${esc(c.title)}</div>`;
+    if (c.company) content += `<div style="color:#334155;font-size:0.82rem;font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
+
+    if (c.phone || c.email || c.website || c.address || c.social) {
+        content += `<div style="margin-top:8px;font-size:0.78rem;line-height:1.5;color:#334155;">`;
+        if (c.phone) content += `<div>${esc(c.phone)}</div>`;
+        if (c.email) content += `<div>${esc(c.email)}</div>`;
+        if (c.website) content += `<div style="color:#0284c7;">${esc(c.website)}</div>`;
+        if (c.address) content += `<div>${esc(c.address)}</div>`;
+        if (c.social) content += `<div>${esc(c.social)}</div>`;
+        content += `</div>`;
+    }
+
+    if (c.tagline) content += `<div style="margin-top:8px;font-size:0.78rem;font-style:italic;color:#475569;">“${esc(c.tagline)}”</div>`;
+    if (c.services) content += `<div style="margin-top:6px;font-size:0.75rem;color:#64748b;">${esc(c.services)}</div>`;
+    if (c.cta) content += `<div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:#0f172a;">${esc(c.cta)}</div>`;
+    if (c.qr_code) content += `<div style="margin-top:10px;font-size:0.72rem;color:#64748b;">[ QR Code ]</div>`;
+
+    if (!content) {
+        content = `<p style="font-size:0.8rem;color:#64748b;">${esc(ds.back_layout || 'Back side ready for information')}</p>`;
+    }
+
+    card.innerHTML = `
+        <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;position:relative;">
+            ${lace}
+            <div>${content}</div>
+            <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;display:flex;justify-content:space-between;">
+                <span>Studio Spec</span>
+                <span style="font-weight:600;">3.5″ × 2.0″</span>
+            </div>
+        </div>`;
+}
+
+function appendMessage(role, text) {
+    const box = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    div.textContent = text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+async function callAgent(text) {
+    // Front -> back transition is handled entirely client-side: no need to
+    // send "looks good" to the model and risk it being misread as an
+    // answer to a contact-info question. Only applies once we're actually
+    // in the two-sided front-design chat — otherwise a reply like "ok,
+    // two-sided" during the sides/logo gates could be misread as a
+    // front-lock confirmation.
+    if (state.design_spec.card_sides === 'two' && !state.front_locked && isFrontConfirmation(text)) {
+        state.front_locked = true;
+        switchSide('back');
+        updateEditFrontButtonVisibility();
+        appendMessage('agent', "Front is locked. Now we build the back.\n\n" + nextBackQuestion());
+        return;
+    }
+
+    // Let the customer step back out to the front at any point while
+    // working on the back, without losing back-side progress. Not
+    // applicable to one-sided cards, which never had a front to begin with.
+    if (state.design_spec.card_sides === 'two' && state.front_locked && isBackToFrontRequest(text)) {
+        goBackToFront();
+        return;
+    }
+
+    const btn = document.getElementById('sendBtn');
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: text,
+                state: state.design_spec,
+                logo_uploaded: state.logo_uploaded,
+                front_locked: state.front_locked
+            })
+        });
+        const data = await res.json();
+
+        if (data.design_spec) {
+            state.design_spec = {
+                ...state.design_spec,
+                ...data.design_spec,
+                contact: { ...state.design_spec.contact, ...(data.design_spec.contact || {}) }
+            };
+        }
+
+        // A one-sided card has no front/logo design step — the moment the
+        // server confirms card_sides === 'one', treat the front as already
+        // "locked" so the back-side Q&A and its progress bar behave
+        // correctly, and the (nonexistent) front tab stays hidden.
+        if (state.design_spec.card_sides === 'one' && !state.front_locked) {
+            state.front_locked = true;
+            updateEditFrontButtonVisibility();
+        }
+
+        appendMessage('agent', data.reply_to_user || 'Updated.');
+        render();
+    } catch (err) {
+        appendMessage('agent', 'Connection problem. Is the server still running?');
+        console.error(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send';
+    }
+}
+
+function send() {
+    const input = document.getElementById('userInput');
+    const text = input.value.trim();
+    if (!text) return;
+    appendMessage('user', text);
+    input.value = '';
+    callAgent(text);
+}
+
+document.getElementById('sendBtn').addEventListener('click', send);
+document.getElementById('userInput').addEventListener('keypress', e => {
+    if (e.key === 'Enter') send();
+});
+
+document.getElementById('logoUpload').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+        state.originalLogoUrl = ev.target.result;
+        state.logo_uploaded = true;
+        state.design_spec.front_layout = 'Logo uploaded – ready for adjustments';
+        state.design_spec.logo_fit = 'contain';
+        state.design_spec.background_mode = 'extend';
+        state.design_spec.logo_scale = 1.0;
+        render();
+        appendMessage('agent', 'Logo received. Tell me if you want it bigger/smaller, moved, or if the background needs changing.');
+        switchSide('front');
+    };
+    reader.readAsDataURL(file);
+});
+
+function downloadCard() {
+    if (state.activeSide === 'front' && state.logo_uploaded) {
+        buildCardImage((url) => {
+            const a = document.createElement('a');
+            a.download = 'business-card-front.png';
+            a.href = url;
+            a.click();
+        });
+    } else if (state.activeSide === 'back') {
+        buildBackCardImage((url) => {
+            const a = document.createElement('a');
+            a.download = 'business-card-back.png';
+            a.href = url;
+            a.click();
+        });
+    } else {
+        alert('Upload a logo first to download the front side.');
+    }
+}
+
+render();
+</script>
+</body>
+</html>

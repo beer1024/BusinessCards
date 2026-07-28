@@ -44,6 +44,14 @@ body { background: var(--bg); color: var(--text); display: flex; height: 100vh; 
 .side-toggle-btn.active { background: var(--accent); color: #0f172a; border-color: var(--accent); }
 .card-label { position: absolute; top: 72px; font-size: 0.75rem; color: var(--muted); letter-spacing: 1.4px; text-transform: uppercase; font-weight: 700; }
 .business-card { width: 480px; height: 274px; border-radius: 12px; box-shadow: 0 25px 50px -12px rgb(0 0 0 / .65); position: relative; overflow: hidden; background: #fff; }
+.business-card.portrait { width: 274px; height: 480px; }
+.orientation-picker { display: flex; gap: 14px; align-self: flex-start; margin-top: -4px; }
+.orientation-btn { background: #0f172a; border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 14px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 0.78rem; font-weight: 600; }
+.orientation-btn:hover { border-color: var(--accent); color: var(--accent); }
+.orientation-rect { display: block; background: #334155; border: 2px solid var(--muted); border-radius: 3px; }
+.orientation-btn:hover .orientation-rect { border-color: var(--accent); }
+.orientation-rect.landscape { width: 46px; height: 30px; }
+.orientation-rect.portrait { width: 30px; height: 46px; }
 .spec-readout { position: absolute; bottom: 24px; width: min(420px, 90%); background: rgba(30,41,59,.88); border: 1px solid var(--border); padding: 12px 16px; border-radius: 10px; font-size: 0.78rem; color: var(--muted); }
 .spec-readout strong { color: var(--text); }
 .download-btn { position: absolute; bottom: 24px; right: 24px; padding: 10px 18px; font-size: 0.85rem; }
@@ -51,6 +59,7 @@ body { background: var(--bg); color: var(--text); display: flex; height: 100vh; 
     body { flex-direction: column; height: auto; min-height: 100vh; }
     .chat-container { width: 100%; height: 45vh; }
     .business-card { width: 340px; height: 194px; }
+    .business-card.portrait { width: 194px; height: 340px; }
 }
 </style>
 </head>
@@ -174,6 +183,8 @@ const state = {
     front_locked: false,
     design_spec: {
         card_sides: null,
+        front_orientation: null,
+        back_orientation: null,
         image_declined: null,
         front_layout: 'Waiting for image',
         back_layout: 'Not started',
@@ -320,7 +331,8 @@ function buildCardImage(cb) {
 
     const img = new Image();
     img.onload = () => {
-        const W = 960, H = 548;
+        const isPortrait = state.design_spec.front_orientation === 'portrait';
+        const W = isPortrait ? 548 : 960, H = isPortrait ? 960 : 548;
         const canvas = document.createElement('canvas');
         canvas.width = W;
         canvas.height = H;
@@ -373,7 +385,8 @@ function buildCardImage(cb) {
 }
 
 function buildBackCardImage(cb) {
-    const W = 960, H = 548;
+    const isPortrait = state.design_spec.back_orientation === 'portrait';
+    const W = isPortrait ? 548 : 960, H = isPortrait ? 960 : 548;
     const canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
@@ -452,6 +465,9 @@ function render() {
     updateSidesUI();
     const card = document.getElementById('cardPreview');
     const ds = state.design_spec;
+
+    const activeOrientation = state.activeSide === 'front' ? ds.front_orientation : ds.back_orientation;
+    card.classList.toggle('portrait', activeOrientation === 'portrait');
 
     document.getElementById('vibeText').textContent = ds.style_vibe || '—';
     document.getElementById('layoutText').textContent =
@@ -534,19 +550,53 @@ function appendMessage(role, text) {
     box.scrollTop = box.scrollHeight;
 }
 
+// Visual rectangle picker for the orientation gate — clicking a rectangle
+// sends "landscape"/"portrait" through the exact same path as typing it.
+function appendOrientationPicker() {
+    const box = document.getElementById('chatMessages');
+    const wrap = document.createElement('div');
+    wrap.className = 'orientation-picker';
+    wrap.innerHTML = `
+        <button class="orientation-btn" type="button" data-value="landscape">
+            <span class="orientation-rect landscape"></span>
+            Landscape
+        </button>
+        <button class="orientation-btn" type="button" data-value="portrait">
+            <span class="orientation-rect portrait"></span>
+            Portrait
+        </button>`;
+    wrap.querySelectorAll('.orientation-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            wrap.remove();
+            send(btn.dataset.value);
+        });
+    });
+    box.appendChild(wrap);
+    box.scrollTop = box.scrollHeight;
+}
+
+const ORIENTATION_BACK_QUESTION = "And for the back — landscape (wide) or portrait (tall)?";
+
 async function callAgent(text) {
     // Front -> back transition is handled entirely client-side: no need to
     // send "looks good" to the model and risk it being misread as an
     // answer to a contact-info question. Only applies once we're actually
-    // in the two-sided front-design chat (both the sides gate and the image
-    // gate resolved) — otherwise a reply like "ok, two-sided" or a bare
-    // "yes" answering the image question could be misread as a front-lock
-    // confirmation.
-    if (state.design_spec.card_sides === 'two' && state.design_spec.image_declined !== null && !state.front_locked && isFrontConfirmation(text)) {
+    // in the two-sided front-design chat (both the sides gate, the
+    // orientation gate, and the image gate resolved) — otherwise a reply
+    // like "ok, two-sided", "portrait", or a bare "yes" answering the
+    // image question could be misread as a front-lock confirmation.
+    if (state.design_spec.card_sides === 'two' && state.design_spec.front_orientation !== null && state.design_spec.image_declined !== null && !state.front_locked && isFrontConfirmation(text)) {
         state.front_locked = true;
         switchSide('back');
         updateEditFrontButtonVisibility();
-        appendMessage('agent', "Front is locked. Now we build the back.\n\n" + nextBackQuestion());
+        // The back can have its own orientation, different from the front —
+        // ask that before diving into contact-info questions.
+        if (state.design_spec.back_orientation === null) {
+            appendMessage('agent', "Front is locked. Now we build the back.\n\n" + ORIENTATION_BACK_QUESTION);
+            appendOrientationPicker();
+        } else {
+            appendMessage('agent', "Front is locked. Now we build the back.\n\n" + nextBackQuestion());
+        }
         return;
     }
 
@@ -592,7 +642,28 @@ async function callAgent(text) {
             updateEditFrontButtonVisibility();
         }
 
+        // When the server processes a global edit request that reopens the
+        // front (e.g. "actually let's do one-sided" or "I do have an image
+        // after all" while working on the back), it can't change our
+        // client-side front_locked flag on its own — it tells us to via
+        // this field so our UI stays in sync.
+        if (Object.prototype.hasOwnProperty.call(data, 'front_locked_override')) {
+            state.front_locked = data.front_locked_override;
+            updateEditFrontButtonVisibility();
+            if (!state.front_locked) {
+                switchSide('front');
+            }
+        }
+
         appendMessage('agent', data.reply_to_user || 'Updated.');
+
+        // Show the visual rectangle picker whenever the server is waiting
+        // on a landscape/portrait answer, instead of relying on the user
+        // to type it correctly.
+        if (typeof data.awaiting_gate === 'string' && data.awaiting_gate.startsWith('orientation')) {
+            appendOrientationPicker();
+        }
+
         render();
     } catch (err) {
         appendMessage('agent', 'Connection problem. Is the server still running?');
@@ -603,12 +674,13 @@ async function callAgent(text) {
     }
 }
 
-function send() {
+function send(overrideText) {
     const input = document.getElementById('userInput');
-    const text = input.value.trim();
+    const useOverride = typeof overrideText === 'string';
+    const text = useOverride ? overrideText : input.value.trim();
     if (!text) return;
     appendMessage('user', text);
-    input.value = '';
+    if (!useOverride) input.value = '';
     callAgent(text);
 }
 

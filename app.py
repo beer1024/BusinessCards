@@ -504,8 +504,8 @@ def handle_back_side(user_message, current_spec):
 
     target = next_unanswered_field(contact)
     if pending_key is None and target is None:
-        reply = ("Your back side has everything I need! Want to change "
-                  "anything, or is it ready to download?")
+        reply = ("Does this look like what you want, or would you like to "
+                  "change anything before we send it off for printing?")
         return reply, clear_pending(contact, back_complete=True)
 
     field_key = pending_key or target["key"]
@@ -709,13 +709,137 @@ def handle_sides_gate(user_message, current_spec):
         spec_update["back_complete"] = False
         reply = (
             "Got it — one-sided it is. That means this one side is the "
-            f"whole card, so let's fill in the details.\n\n{BACK_FIELDS[0]['question']}"
+            f"whole card, so let's fill in the details.\n\n{ORIENTATION_GATE_QUESTION_FRONT}"
         )
         return reply, spec_update
 
     # intent == "two"
     spec_update["card_sides"] = "two"
-    reply = f"Two-sided it is. {IMAGE_GATE_QUESTION}"
+    reply = f"Two-sided it is. {ORIENTATION_GATE_QUESTION_FRONT}"
+    return reply, spec_update
+
+
+# ---------------------------------------------------------------------------
+# ORIENTATION GATE — reached right after card_sides resolves, before the
+# image question (two-sided) or before back-side Q&A (one-sided). Asked
+# again for two-sided cards when the customer finishes the front and moves
+# to the back, so front and back can differ. Same pattern as the other
+# gates: Python owns the question/state, the LLM only classifies intent,
+# anything ambiguous gets a clarifying re-ask instead of a guess.
+# ---------------------------------------------------------------------------
+
+ORIENTATION_GATE_QUESTION_FRONT = (
+    "Would you like the front in landscape (wide) or portrait (tall) "
+    "orientation?"
+)
+ORIENTATION_GATE_QUESTION_BACK = (
+    "And for the back — landscape (wide) or portrait (tall)?"
+)
+
+ORIENTATION_INTENT_SYSTEM_PROMPT = """
+You are an intent classifier for a single either/or question in a business
+card design tool about card orientation: "landscape (wide) or portrait
+(tall)?"
+
+Respond with ONLY this JSON shape, nothing else:
+{
+  "intent": "landscape" | "portrait" | "off_topic",
+  "reply_to_user": ""
+}
+
+Rules:
+- "landscape": the customer wants a landscape/wide/horizontal orientation,
+  in any wording ("landscape", "wide", "horizontal", "the normal way",
+  "sideways").
+- "portrait": the customer wants a portrait/tall/vertical orientation, in
+  any wording ("portrait", "tall", "vertical", "upright", "standing up").
+- "off_topic": the customer asked a question, made small talk, or said
+  something that doesn't clearly answer landscape vs portrait. Write a
+  short, friendly "reply_to_user" that briefly clarifies/answers what they
+  said, then ends by asking the same orientation question verbatim as it
+  was given to you. Never guess landscape/portrait here — if there's any
+  doubt, use off_topic.
+"""
+
+LANDSCAPE_WORDS = {
+    "landscape", "wide", "horizontal", "sideways", "the normal way", "wide way",
+}
+PORTRAIT_WORDS = {
+    "portrait", "tall", "vertical", "upright", "standing up", "long way",
+}
+
+
+def _orientation_fallback(user_message):
+    """Deterministic fallback used only if the LLM call fails."""
+    lower = user_message.lower().strip(" .!")
+    if lower in LANDSCAPE_WORDS or any(_starts_with_phrase(lower, w) for w in LANDSCAPE_WORDS):
+        return {"intent": "landscape", "reply_to_user": ""}
+    if lower in PORTRAIT_WORDS or any(_starts_with_phrase(lower, w) for w in PORTRAIT_WORDS):
+        return {"intent": "portrait", "reply_to_user": ""}
+    return {"intent": "off_topic", "reply_to_user": ""}
+
+
+def interpret_orientation_reply(user_message, question_text):
+    if not client:
+        raise RuntimeError("GROQ_API_KEY is missing or empty")
+
+    messages = [
+        {"role": "system", "content": ORIENTATION_INTENT_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f'The question asked was: "{question_text}"\n'
+                f"Customer: {user_message}"
+            ),
+        },
+    ]
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+        timeout=15,
+    )
+    raw = completion.choices[0].message.content.strip()
+    result = json.loads(raw)
+    if result.get("intent") not in {"landscape", "portrait", "off_topic"}:
+        raise ValueError("Model returned an unrecognized intent")
+    return result
+
+
+def handle_orientation_gate(user_message, current_spec, side):
+    """side is "front" or "back" — decides which field gets set and which
+    question re-asks on an unclear answer."""
+    question_text = (
+        ORIENTATION_GATE_QUESTION_FRONT if side == "front"
+        else ORIENTATION_GATE_QUESTION_BACK
+    )
+    field_key = "front_orientation" if side == "front" else "back_orientation"
+
+    try:
+        result = interpret_orientation_reply(user_message, question_text)
+    except Exception as e:
+        print(f"Orientation-gate LLM interpretation failed, using fallback: {e}")
+        result = _orientation_fallback(user_message)
+
+    intent = result.get("intent")
+    spec_update = dict(current_spec)
+
+    if intent == "off_topic":
+        spec_update[field_key] = None
+        reply = result.get("reply_to_user") or question_text
+        return reply, spec_update
+
+    spec_update[field_key] = intent  # "landscape" or "portrait"
+
+    if side == "front":
+        if current_spec.get("card_sides") == "one":
+            reply = f"Got it. {BACK_FIELDS[0]['question']}"
+        else:
+            reply = f"Got it. {IMAGE_GATE_QUESTION}"
+    else:
+        reply = f"Got it. {BACK_FIELDS[0]['question']}"
+
     return reply, spec_update
 
 
@@ -840,6 +964,150 @@ def handle_image_gate(user_message, current_spec):
     return reply, spec_update
 
 
+# ---------------------------------------------------------------------------
+# GLOBAL EDIT-REQUEST CHECK — runs first, before any stage-specific routing.
+# Lets the customer change an already-resolved gate decision (sides,
+# orientation, image) from anywhere in the conversation, not just while
+# that question is actively being asked. This is what makes "actually,
+# let's make it portrait instead" or "wait, I do have a logo after all"
+# work mid-conversation instead of being stuck or misread. Back-side field
+# edits and front-design tweaks already have their own mechanisms
+# (edit_other_field / FRONT_SYSTEM_PROMPT) and are untouched by this check.
+# ---------------------------------------------------------------------------
+
+GLOBAL_EDIT_SYSTEM_PROMPT = """
+You are watching a business-card design conversation for requests to change
+a decision the customer already made earlier, from anywhere in the
+conversation (not just whatever is currently being asked). You are given
+the customer's current confirmed choices and their latest message.
+
+Respond with ONLY this JSON shape, nothing else:
+{
+  "intent": "change_sides" | "change_orientation" | "change_image" | "none",
+  "reply_to_user": ""
+}
+
+Rules:
+- "change_sides": ONLY if card_sides is already decided (not null) AND the
+  customer is clearly asking to change the number of sides, in any wording
+  ("actually let's do one-sided instead", "wait, can we make it
+  two-sided", "switch to one side").
+- "change_orientation": ONLY if an orientation is already decided (front or
+  back is not null) AND the customer is clearly asking to change
+  landscape/portrait, in any wording ("actually make it portrait",
+  "switch to landscape instead", "can we turn it sideways").
+- "change_image": ONLY if image_declined is already decided (not null) AND
+  the customer is clearly asking to add/remove/reconsider the image, in any
+  wording ("I do have a logo after all", "actually let's skip the image",
+  "let's not use an image").
+- "none": anything else — a normal answer to whatever's currently being
+  asked, a back-side detail, small talk, or a front-design tweak that
+  doesn't touch sides/orientation/image-yes-no. This should be the most
+  common answer. If the field in question is still null (not yet decided),
+  always answer "none" — that means it's a first-time answer to the
+  current question, not a change request.
+"""
+
+CHANGE_TRIGGER_WORDS = (
+    "actually", "instead", "change", "switch", "wait", "nevermind",
+    "never mind", "i changed my mind", "can we make it", "let's make it",
+    "lets make it", "let's do", "lets do", "reconsider", "go back",
+)
+
+
+def interpret_global_edit_request(user_message, current_spec):
+    if not client:
+        raise RuntimeError("GROQ_API_KEY is missing or empty")
+
+    state_summary = (
+        f"card_sides={current_spec.get('card_sides')}, "
+        f"front_orientation={current_spec.get('front_orientation')}, "
+        f"back_orientation={current_spec.get('back_orientation')}, "
+        f"image_declined={current_spec.get('image_declined')}"
+    )
+    messages = [
+        {"role": "system", "content": GLOBAL_EDIT_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": f"Current choices: {state_summary}\nCustomer: {user_message}",
+        },
+    ]
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+        timeout=15,
+    )
+    raw = completion.choices[0].message.content.strip()
+    result = json.loads(raw)
+    if result.get("intent") not in {"change_sides", "change_orientation", "change_image", "none"}:
+        raise ValueError("Model returned an unrecognized intent")
+    return result
+
+
+def _global_edit_fallback(user_message, current_spec):
+    """Deterministic fallback used only if the LLM call fails. Requires an
+    explicit change-signal word AND a mention of the relevant concept AND
+    that field already being resolved — otherwise a normal first-time
+    answer like "two-sided" or "portrait" could be misread as an edit
+    request instead of an answer to the question actually being asked."""
+    lower = user_message.lower().strip(" .!")
+    if not any(w in lower for w in CHANGE_TRIGGER_WORDS):
+        return {"intent": "none"}
+
+    if current_spec.get("card_sides") is not None and (
+        "side" in lower
+        or any(_starts_with_phrase(lower, w) for w in ONE_SIDE_WORDS | TWO_SIDE_WORDS)
+    ):
+        return {"intent": "change_sides"}
+
+    if (
+        current_spec.get("front_orientation") is not None
+        or current_spec.get("back_orientation") is not None
+    ) and (
+        "orientation" in lower
+        or any(w in lower for w in LANDSCAPE_WORDS | PORTRAIT_WORDS)
+    ):
+        return {"intent": "change_orientation"}
+
+    if current_spec.get("image_declined") is not None and (
+        "image" in lower or "logo" in lower or "photo" in lower or "picture" in lower
+    ):
+        return {"intent": "change_image"}
+
+    return {"intent": "none"}
+
+
+def route_conversation(user_message, current_spec, front_locked, image_uploaded):
+    """The single source of truth for "what question comes next" given the
+    current state. Used both for normal turns and for resuming after a
+    global edit request resets one of the gate fields."""
+    card_sides = current_spec.get("card_sides")
+    front_orientation = current_spec.get("front_orientation")
+    back_orientation = current_spec.get("back_orientation")
+    image_declined = current_spec.get("image_declined")
+
+    if card_sides is None:
+        return handle_sides_gate(user_message, current_spec)
+
+    if card_sides == "one":
+        if front_orientation is None:
+            return handle_orientation_gate(user_message, current_spec, "front")
+        return handle_back_side(user_message, current_spec)
+
+    # card_sides == "two"
+    if front_orientation is None:
+        return handle_orientation_gate(user_message, current_spec, "front")
+    if front_locked:
+        if back_orientation is None:
+            return handle_orientation_gate(user_message, current_spec, "back")
+        return handle_back_side(user_message, current_spec)
+    if image_declined is None:
+        return handle_image_gate(user_message, current_spec)
+    return handle_front_side(user_message, current_spec, image_uploaded)
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/api/chat":
@@ -863,26 +1131,71 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             print(f"card_sides: {card_sides}, image_declined: {image_declined}, front_locked: {front_locked}")
             print(f"User: {user_message}")
 
-            if card_sides is None:
-                # Nothing decided yet — this is always the first question,
-                # ahead of any front/back logic.
-                reply, spec_update = handle_sides_gate(user_message, current_spec)
-            elif card_sides == "one":
-                # One-sided cards never have a front/image design — every
-                # message from here on is back-side detail collection.
-                reply, spec_update = handle_back_side(user_message, current_spec)
-            elif front_locked:
-                reply, spec_update = handle_back_side(user_message, current_spec)
-            elif image_declined is None:
-                # Two-sided, but we don't yet know if there's an image —
-                # resolve that closed question before any creative chat.
-                reply, spec_update = handle_image_gate(user_message, current_spec)
-            else:
-                reply, spec_update = handle_front_side(
-                    user_message, current_spec, image_uploaded
-                )
+            # Global edit-request check — only meaningful once at least the
+            # sides gate has resolved (nothing to "change" before that).
+            edit_intent = "none"
+            if card_sides is not None:
+                try:
+                    global_result = interpret_global_edit_request(user_message, current_spec)
+                except Exception as e:
+                    print(f"Global edit-request check failed, using fallback: {e}")
+                    global_result = _global_edit_fallback(user_message, current_spec)
+                edit_intent = global_result.get("intent", "none")
 
-            response = {"reply_to_user": reply, "design_spec": spec_update}
+            spec_for_routing = dict(current_spec)
+            routing_front_locked = front_locked
+            front_locked_override = None
+            prefix = None
+
+            if edit_intent == "change_sides" and spec_for_routing.get("card_sides") is not None:
+                spec_for_routing["card_sides"] = None
+                spec_for_routing["front_orientation"] = None
+                spec_for_routing["back_orientation"] = None
+                spec_for_routing["image_declined"] = None
+                routing_front_locked = False
+                front_locked_override = False
+                prefix = "No problem, let's redo that. "
+            elif edit_intent == "change_orientation" and (
+                spec_for_routing.get("front_orientation") is not None
+                or spec_for_routing.get("back_orientation") is not None
+            ):
+                if routing_front_locked:
+                    spec_for_routing["back_orientation"] = None
+                else:
+                    spec_for_routing["front_orientation"] = None
+                prefix = "Sure, let's change that. "
+            elif edit_intent == "change_image" and spec_for_routing.get("image_declined") is not None:
+                spec_for_routing["image_declined"] = None
+                if routing_front_locked:
+                    routing_front_locked = False
+                    front_locked_override = False
+                prefix = "No problem, let's revisit that. "
+
+            if prefix is not None:
+                # Re-derive the next question from the reset state rather
+                # than treating the edit-request text itself as an answer.
+                reply, spec_update = route_conversation("", spec_for_routing, routing_front_locked, image_uploaded)
+                reply = prefix + reply
+            else:
+                reply, spec_update = route_conversation(user_message, current_spec, front_locked, image_uploaded)
+                routing_front_locked = front_locked
+
+            # Tell the frontend whether to show the visual orientation
+            # picker for whatever question is about to be asked.
+            awaiting_gate = None
+            if spec_update.get("card_sides") is not None:
+                if spec_update.get("front_orientation") is None:
+                    awaiting_gate = "orientation_front"
+                elif (
+                    spec_update.get("card_sides") == "two"
+                    and routing_front_locked
+                    and spec_update.get("back_orientation") is None
+                ):
+                    awaiting_gate = "orientation_back"
+
+            response = {"reply_to_user": reply, "design_spec": spec_update, "awaiting_gate": awaiting_gate}
+            if front_locked_override is not None:
+                response["front_locked_override"] = front_locked_override
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

@@ -136,6 +136,21 @@ Always return ONLY this exact JSON shape, nothing before or after it:
 }
 """
 
+# Deterministic safety net for handle_front_side (see comment there) — a
+# bare, standalone negative reply, matched on the WHOLE message (not just
+# a substring) so a longer message like "no, actually let's skip the image
+# entirely" is deliberately left to the LLM to interpret instead.
+BARE_NEGATIVE_REPLIES = {
+    "no", "nope", "nah", "nay", "no thanks", "no thank you", "not really",
+    "not right now", "no i'm good", "no im good", "nah it's fine",
+    "nah its fine", "no it's fine", "no its fine",
+}
+
+
+def _is_bare_negative(user_message):
+    lower = user_message.strip().lower().strip(" .!")
+    return lower in BARE_NEGATIVE_REPLIES
+
 # ---------------------------------------------------------------------------
 # BACK SIDE — Python owns the order and the questions. The LLM is only asked
 # to interpret a single answer for a single field. This is what fixes the
@@ -859,6 +874,26 @@ def handle_back_side(user_message, current_spec):
 
 
 def handle_front_side(user_message, current_spec, image_uploaded):
+    # Deterministic safety net, checked BEFORE calling the model: a bare
+    # short negative reply ("no", "nope", ...) once an image is already
+    # uploaded and not declined is too high-stakes to leave entirely to a
+    # small model's judgment — prompt-only guidance for this was tried and
+    # still misfired in practice (the model kept reading "no" as "no image
+    # at all" and reverting to text-only, discarding the uploaded image).
+    # This mirrors the deterministic-fallback pattern used by every other
+    # gate in this app. The reply is deliberately generic (doesn't presume
+    # the pending question was specifically about size/position/full-bleed)
+    # since we don't track exactly what was last asked here.
+    if image_uploaded and not current_spec.get("image_declined") and _is_bare_negative(user_message):
+        spec_update = dict(current_spec)
+        spec_update["image_declined"] = False
+        reply = (
+            "No problem, I'll leave that as it is. Let me know anytime if "
+            "you'd like to resize the image, reposition it, or make it "
+            "full-bleed, or we can move on to the back whenever you're ready."
+        )
+        return reply, spec_update
+
     if not client:
         raise RuntimeError("GROQ_API_KEY is missing or empty")
 

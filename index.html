@@ -178,12 +178,19 @@ const CONFIRM_PHRASES = [
     'ready for the back'
 ];
 
-// Short standalone affirmations ("good", "ok", "yep") only count if the
-// whole message is short and there's no negation — otherwise "not good"
-// or "good, but move the image left" would wrongly trigger a lock.
+// Short standalone affirmations only count if the whole message is short
+// and there's no negation — otherwise "not good" or "good, but move the
+// image left" would wrongly trigger a lock. Deliberately excludes
+// "yes"/"yep"/"yup"/"ok"/"okay": those are just as likely to be answering
+// a different question (e.g. "yes" to "would you like to adjust the
+// size...?") as they are to mean "I'm done with the front" — too
+// ambiguous for this instant, no-round-trip local shortcut. A bare "yes"
+// like that still gets handled correctly by the server's front_confirmed
+// classifier (any wording of "I'm happy, let's move on"), it just takes
+// one extra round trip instead of being caught here.
 const CONFIRM_WORDS = new Set([
-    'good', 'great', 'perfect', 'nice', 'done', 'finished', 'yes', 'yep',
-    'yup', 'ok', 'okay', 'correct', 'confirm', 'confirmed', 'ready'
+    'good', 'great', 'perfect', 'nice', 'done', 'finished',
+    'correct', 'confirm', 'confirmed', 'ready'
 ]);
 
 const NEGATION_MARKERS = ['not', "don't", 'dont', 'but', 'except', 'however', "isn't", 'isnt'];

@@ -32,7 +32,12 @@ body { background: var(--bg); color: var(--text); display: flex; height: 100vh; 
 .message.user { background: var(--accent); color: #0f172a; align-self: flex-end; font-weight: 500; }
 .chat-input-area { padding: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
 .upload-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.82rem; color: var(--muted); background: #0f172a; padding: 10px 12px; border-radius: 8px; border: 1px dashed var(--border); }
-.upload-row input[type=file] { color: var(--text); font-size: 0.8rem; max-width: 180px; }
+.upload-row label { cursor: pointer; }
+.upload-row label:hover strong { color: var(--accent); }
+.upload-row input[type=file] {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .input-row { display: flex; gap: 8px; }
 .input-row input[type=text] { flex: 1; padding: 11px 14px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 0.92rem; }
 .input-row input[type=text]:focus { outline: none; border-color: var(--accent); }
@@ -181,12 +186,18 @@ function isBackToFrontRequest(text) {
 const state = {
     activeSide: 'front',
     front_locked: false,
-    // A one-step-back (and named-target) undo history for the freeform
-    // front-design chat, since that stage has no per-field gate of its own.
-    // Each entry: { label, spec } where spec is a snapshot of the
-    // front-relevant fields as they were *before* the change described by
-    // label took effect.
-    frontHistory: [],
+    // A single, unified undo history covering BOTH gate decisions (sides,
+    // orientation, image yes/no) AND freeform front-design tweaks (full
+    // bleed, resize, reposition, style). Any undo-ish phrase ("go back",
+    // "undo", "never mind", "scratch that"...) pops the single most recent
+    // entry regardless of which kind it is, handled instantly and locally
+    // with no server/LLM round-trip. Each entry is either:
+    //   { kind: 'gate', category, label, fieldKey, cascadeFields,
+    //     reaskQuestion, isOrientation }
+    //   { kind: 'tweak', category, label, spec }
+    // where 'spec' (tweak) is a snapshot of the front-relevant fields as
+    // they were *before* that change took effect.
+    undoHistory: [],
     design_spec: {
         card_sides: null,
         front_orientation: null,
@@ -218,11 +229,15 @@ const state = {
 };
 
 // ---------------------------------------------------------------------------
-// FRONT-DESIGN UNDO — the front-design chat (full bleed, resize, reposition,
-// style) is a freeform LLM conversation with no memory of the prior state.
-// We keep a lightweight local history of snapshots here so "go back"/"undo"
-// (one step) and "undo the full bleed" (a named step) can be handled
-// instantly and deterministically, without asking the model to guess.
+// UNIFIED UNDO — a single history of everything that's been decided so far
+// this session: the four gate decisions (sides, front orientation, back
+// orientation, image yes/no) AND freeform front-design tweaks (full bleed,
+// resize, reposition, style). Any undo-ish phrase ("go back", "undo",
+// "never mind", "scratch that"...) pops the single most recent entry,
+// whichever kind it is, and restores it instantly and deterministically —
+// no server/LLM round-trip needed. A *named* undo ("undo the full bleed",
+// "go back to landscape") searches this same history for the most recent
+// matching entry instead of always taking the very last one.
 // ---------------------------------------------------------------------------
 
 const FRONT_RELEVANT_FIELDS = [
@@ -237,18 +252,32 @@ function snapshotFrontFields(spec) {
     return snap;
 }
 
-// Each category pairs a human label (for confirmations) with keywords used
-// to match a *named* undo request ("undo the full bleed") to the right past
-// change. Checked in order, most specific first. Note: whether the customer
-// has an image at all (image_declined) is intentionally NOT one of these —
-// that's a gate decision owned by the server's global edit-request check
-// (change_image), which properly resets it and re-asks the image question;
-// local undo here only ever touches front-design tweaks. front_layout is
-// also not its own category — it's a short LLM-written description that's
-// regenerated on nearly every turn, even trivial ones, so treating it as a
-// change trigger on its own would create noisy phantom undo entries; it's
-// still included in each snapshot so a real undo restores it too.
-const FRONT_CHANGE_CATEGORIES = [
+// Gate questions, mirrored here so a popped gate-decision entry can be
+// re-asked locally without a server round-trip. Keep this wording in sync
+// with app.py (SIDES_GATE_QUESTION / ORIENTATION_GATE_QUESTION_FRONT /
+// ORIENTATION_GATE_QUESTION_BACK / IMAGE_GATE_QUESTION).
+const SIDES_GATE_QUESTION = "Would you like a one-sided or two-sided business card?";
+const ORIENTATION_FRONT_QUESTION = "Would you like the front in landscape (wide) or portrait (tall) orientation?";
+const IMAGE_GATE_QUESTION = "Do you have an image you'd like to use, or would you like a text-only design instead?";
+
+// Every category (gate decisions + design tweaks) pairs a human label (for
+// confirmations) with keywords used to match a *named* undo request to the
+// right past change. Checked in order, most specific first. front_layout is
+// not its own category — it's a short LLM-written description regenerated
+// on nearly every turn, so treating it as a change trigger would create
+// noisy phantom undo entries; it's still included in each tweak snapshot so
+// a real undo restores it too.
+const UNDO_CATEGORIES = [
+    { id: 'sides', label: 'chose one-sided or two-sided',
+      keywords: ['one-sided', 'one sided', 'two-sided', 'two sided', 'single-sided',
+        'single sided', 'double-sided', 'double sided', 'one side', 'two side',
+        'both sides', 'sides'] },
+    { id: 'orientation', label: 'chose that orientation',
+      keywords: ['landscape', 'portrait', 'orientation', 'sideways'] },
+    { id: 'image', label: 'answered the image question',
+      keywords: ['have an image', 'have a logo', 'skip the image', 'skip the logo',
+        'no image', 'no logo', 'text-only', 'text only', 'add the image',
+        'image back', "don't want the image", 'without the image', 'the image', 'the logo'] },
     { id: 'bleed', label: 'made it full-bleed (edge-to-edge)',
       keywords: ['full bleed', 'full-bleed', 'edge to edge', 'edge-to-edge', 'bleed', 'cover'] },
     { id: 'contain', label: 'put the white border back (no longer full-bleed)',
@@ -264,12 +293,12 @@ const FRONT_CHANGE_CATEGORIES = [
 ];
 
 function categoryLabel(id) {
-    const cat = FRONT_CHANGE_CATEGORIES.find(c => c.id === id);
+    const cat = UNDO_CATEGORIES.find(c => c.id === id);
     return cat ? cat.label : 'made that change';
 }
 
-// Figures out, from a before/after diff, which single category best
-// describes what just changed (checked in priority order — the most
+// Figures out, from a before/after diff, which single design-tweak category
+// best describes what just changed (checked in priority order — the most
 // semantically significant field wins if several changed at once).
 function deriveFrontChangeCategory(oldFields, newFields) {
     if (oldFields.image_fit !== newFields.image_fit) {
@@ -292,83 +321,105 @@ function deriveFrontChangeCategory(oldFields, newFields) {
     return null; // nothing front-relevant actually changed this turn
 }
 
-// True only during the freeform front-design chat stage: sides, orientation
-// and the image yes/no question are all resolved, and the front isn't
-// locked yet. This is exactly the stage route_conversation would send to
-// handle_front_side, and the only stage frontHistory applies to.
+// True during the freeform front-design chat stage: sides, orientation and
+// the image yes/no question are all resolved, and the front isn't locked
+// yet. This is exactly the stage route_conversation would send to
+// handle_front_side, and the only stage design-tweak history applies to.
 function isFrontDesignStage() {
     const ds = state.design_spec;
     return ds.card_sides === 'two' && ds.front_orientation !== null &&
         ds.image_declined !== null && !state.front_locked;
 }
 
-const BARE_UNDO_PHRASES = [
-    'go back', 'undo that', 'undo it', 'undo', 'never mind', 'nevermind',
-    'revert that', 'revert', 'back up', 'undo the last change', 'undo last',
-];
+// True once we're past all four gate decisions and into the back-side
+// contact-field checklist (name/phone/etc). Undo for those per-field
+// answers is explicitly out of scope (they already have their own
+// edit/confirm flow) — once here, local unified undo steps aside and lets
+// messages go to the server as before, rather than reaching back to undo a
+// now-stale gate decision from several steps ago.
+function isBackFieldStage() {
+    const ds = state.design_spec;
+    if (ds.card_sides === 'one') return ds.front_orientation !== null;
+    if (ds.card_sides === 'two') return state.front_locked && ds.back_orientation !== null;
+    return false;
+}
 
-// If the message actually names a sides/orientation/image-decision concept,
-// it belongs to the server's global edit-request check instead (which owns
-// resetting those and re-asking the right gate question) — local undo here
-// must not swallow it first just because it also contains "go back"/"undo".
-const NON_FRONT_UNDO_CONCEPTS = [
-    'landscape', 'portrait', 'orientation', 'sideways',
-    'one-sided', 'one sided', 'two-sided', 'two sided',
-    'single-sided', 'single sided', 'double-sided', 'double sided',
-    'one side', 'two side', 'both sides',
-    'have an image', 'have a logo', 'skip the image', 'skip the logo',
-    'no image', 'no logo', 'text-only', 'text only', 'add the image',
-    'image back', "don't want the image", 'without the image',
+// Broad net for "anything that suggests undoing what was just done" — not
+// just the literal phrase "go back".
+const BARE_UNDO_PHRASES = [
+    'go back', 'go back one step', 'undo that', 'undo it', 'undo this', 'undo',
+    'never mind', 'nevermind', 'revert that', 'revert it', 'revert', 'back up',
+    'back it up', 'undo the last change', 'undo last', 'undo the last thing',
+    'take that back', 'take it back', 'scratch that', 'cancel that', 'reverse that',
 ];
 
 function isUndoRequest(text) {
     const lower = text.toLowerCase().trim().replace(/[.!]+$/, '');
-    if (NON_FRONT_UNDO_CONCEPTS.some(k => lower.includes(k))) return false;
     return BARE_UNDO_PHRASES.some(p => lower === p || lower.includes(p));
 }
 
-function matchFrontHistoryCategory(text) {
+function matchUndoHistoryCategory(text) {
     const lower = text.toLowerCase();
-    for (const cat of FRONT_CHANGE_CATEGORIES) {
+    for (const cat of UNDO_CATEGORIES) {
         if (cat.keywords.some(k => lower.includes(k))) return cat.id;
     }
     return null;
 }
 
-function restoreFrontSnapshot(spec) {
-    Object.assign(state.design_spec, spec);
+// Restores a gate-decision entry: resets its field (and any cascade
+// fields), re-asks that gate's own question, and shows the orientation
+// picker again if applicable.
+function restoreGateEntry(entry) {
+    state.design_spec[entry.fieldKey] = null;
+    (entry.cascadeFields || []).forEach(f => { state.design_spec[f] = null; });
+    if (entry.fieldKey === 'card_sides') {
+        state.front_locked = false;
+        updateEditFrontButtonVisibility();
+        switchSide('front');
+    }
+    appendMessage('agent', `Got it — back to before I ${entry.label}. ${entry.reaskQuestion}`);
+    if (entry.isOrientation) appendOrientationPicker();
+    render();
 }
 
-// Handles a local front-design undo request without any network call.
-// Returns true if it handled the message (caller should stop), false if
-// this wasn't actually an undo request so the normal flow should continue.
-function tryHandleFrontUndo(text) {
-    if (!isFrontDesignStage() || !isUndoRequest(text)) return false;
+function restoreTweakEntry(entry) {
+    Object.assign(state.design_spec, entry.spec);
+    appendMessage('agent', `Got it — back to before I ${entry.label}.`);
+    render();
+}
 
-    const targetCategory = matchFrontHistoryCategory(text);
+function restoreUndoEntry(entry) {
+    if (entry.kind === 'gate') restoreGateEntry(entry);
+    else restoreTweakEntry(entry);
+}
+
+// Handles a local unified undo request without any network call. Returns
+// true if it handled the message (caller should stop), false if this
+// wasn't actually an undo request (or we're past the point where local
+// undo applies) so the normal flow should continue.
+function tryHandleUndo(text) {
+    if (isBackFieldStage() || !isUndoRequest(text)) return false;
+
+    const targetCategory = matchUndoHistoryCategory(text);
 
     if (targetCategory) {
-        const idx = state.frontHistory.map(e => e.category).lastIndexOf(targetCategory);
+        const idx = state.undoHistory.map(e => e.category).lastIndexOf(targetCategory);
         if (idx === -1) {
             appendMessage('agent', "I haven't made that kind of change yet, so there's nothing to undo there.");
             return true;
         }
-        const entry = state.frontHistory[idx];
-        restoreFrontSnapshot(entry.spec);
-        state.frontHistory = state.frontHistory.slice(0, idx);
-        appendMessage('agent', `Got it — back to before I ${entry.label}.`);
-        render();
+        const entry = state.undoHistory[idx];
+        state.undoHistory = state.undoHistory.slice(0, idx);
+        restoreUndoEntry(entry);
         return true;
     }
 
-    if (state.frontHistory.length === 0) {
-        appendMessage('agent', "There's nothing to undo yet — try making a change first, like asking for full bleed.");
+    if (state.undoHistory.length === 0) {
+        appendMessage('agent', "There's nothing to undo yet.");
         return true;
     }
-    const entry = state.frontHistory.pop();
-    restoreFrontSnapshot(entry.spec);
-    appendMessage('agent', `Got it — back to before I ${entry.label}.`);
-    render();
+    const entry = state.undoHistory.pop();
+    restoreUndoEntry(entry);
     return true;
 }
 
@@ -769,11 +820,11 @@ async function callAgent(text) {
         return;
     }
 
-    // "go back"/"undo"/"undo the full bleed" while still designing the
-    // front: handled entirely locally and instantly from frontHistory,
-    // rather than sending it to the model (which has no memory of the
-    // prior state and would just guess at an unrelated reply).
-    if (tryHandleFrontUndo(text)) {
+    // "go back"/"undo"/"never mind"/etc. anywhere before the back-side
+    // contact-field checklist: handled entirely locally and instantly from
+    // the unified undo history, rather than sending it to the model (which
+    // has no memory of prior state and would just guess at a reply).
+    if (tryHandleUndo(text)) {
         return;
     }
 
@@ -781,9 +832,16 @@ async function callAgent(text) {
     btn.disabled = true;
     btn.textContent = '…';
 
-    // Capture a "before" snapshot only when this turn is actually going to
-    // be routed to the freeform front-design chat, so we can record what
-    // changed (if anything) once the response comes back.
+    // Capture "before" snapshots so we can record what changed (if
+    // anything) once the response comes back — both the four gate
+    // decisions (always) and the front-design fields (only when this turn
+    // is actually routed to the freeform front-design chat).
+    const preGateSnapshot = {
+        card_sides: state.design_spec.card_sides,
+        front_orientation: state.design_spec.front_orientation,
+        back_orientation: state.design_spec.back_orientation,
+        image_declined: state.design_spec.image_declined,
+    };
     const wasFrontDesignStage = isFrontDesignStage();
     const preFrontSnapshot = wasFrontDesignStage ? snapshotFrontFields(state.design_spec) : null;
 
@@ -808,6 +866,44 @@ async function callAgent(text) {
             };
         }
 
+        // Record any gate decision that just resolved (or changed to a new
+        // value) this turn, so a later "undo" has a real entry to pop back
+        // to unanswered, re-asking that gate's own question.
+        const ds = state.design_spec;
+        if (preGateSnapshot.card_sides !== ds.card_sides && ds.card_sides !== null) {
+            state.undoHistory.push({
+                kind: 'gate', category: 'sides',
+                label: `chose a ${ds.card_sides === 'one' ? 'one-sided' : 'two-sided'} card`,
+                fieldKey: 'card_sides',
+                cascadeFields: ['front_orientation', 'back_orientation', 'image_declined'],
+                reaskQuestion: SIDES_GATE_QUESTION, isOrientation: false,
+            });
+        }
+        if (preGateSnapshot.front_orientation !== ds.front_orientation && ds.front_orientation !== null) {
+            state.undoHistory.push({
+                kind: 'gate', category: 'orientation',
+                label: 'chose the front orientation',
+                fieldKey: 'front_orientation', cascadeFields: [],
+                reaskQuestion: ORIENTATION_FRONT_QUESTION, isOrientation: true,
+            });
+        }
+        if (preGateSnapshot.back_orientation !== ds.back_orientation && ds.back_orientation !== null) {
+            state.undoHistory.push({
+                kind: 'gate', category: 'orientation',
+                label: 'chose the back orientation',
+                fieldKey: 'back_orientation', cascadeFields: [],
+                reaskQuestion: ORIENTATION_BACK_QUESTION, isOrientation: true,
+            });
+        }
+        if (preGateSnapshot.image_declined !== ds.image_declined && ds.image_declined !== null) {
+            state.undoHistory.push({
+                kind: 'gate', category: 'image',
+                label: 'answered the image question',
+                fieldKey: 'image_declined', cascadeFields: [],
+                reaskQuestion: IMAGE_GATE_QUESTION, isOrientation: false,
+            });
+        }
+
         // Record this turn's front-design change (if anything actually
         // changed) so a later "go back"/"undo the full bleed" has a real
         // snapshot to restore instead of nothing to work with.
@@ -815,7 +911,7 @@ async function callAgent(text) {
             const newFrontSnapshot = snapshotFrontFields(state.design_spec);
             const category = deriveFrontChangeCategory(preFrontSnapshot, newFrontSnapshot);
             if (category) {
-                state.frontHistory.push({ category, label: categoryLabel(category), spec: preFrontSnapshot });
+                state.undoHistory.push({ kind: 'tweak', category, label: categoryLabel(category), spec: preFrontSnapshot });
             }
         }
 
@@ -823,7 +919,7 @@ async function callAgent(text) {
         // starts the front over from scratch — any old undo history no
         // longer applies to whatever comes next.
         if (state.design_spec.card_sides === null) {
-            state.frontHistory = [];
+            state.undoHistory = [];
         }
 
         // A one-sided card has no front/image design step — the moment the

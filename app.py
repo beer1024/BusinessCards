@@ -56,6 +56,25 @@ You OWN the image_declined flag — decide it yourself from the conversation:
   actually uploaded; use it together with the customer's words, not instead
   of them.
 
+When the customer gives you a sizing instruction, always turn it into a
+concrete image_scale number (clamped to 0.3-1.0) — never reply with vague
+instructions back to them. Worked examples, using the CURRENT image_scale
+from the design_spec you were given as the starting point:
+- "reduce size by 50%" / "make it 50% smaller" -> new_scale = current_scale
+  x 0.5
+- "increase size by 20%" / "make it 20% bigger" -> new_scale = current_scale
+  x 1.2
+- A bare number on its own, like ".5", "0.5", or "50%" (especially right
+  after you asked about size, or right after the customer said "smaller"/
+  "bigger") -> treat it as the new image_scale directly (0.5 in this
+  example), not as a request for more instructions.
+- Vaguer phrases with no number ("make it bigger", "make it smaller") ->
+  keep using your own judgment for a reasonable step (e.g. +/-0.2 to 0.3),
+  same as before.
+Always confirm the concrete result in reply_to_user (e.g. "Done - I've
+resized it to half its previous size.") rather than describing the
+adjustment as something the customer still needs to do.
+
 Never mention or modify contact information or anything about the back of
 the card. That is handled separately by a different system.
 
@@ -1181,9 +1200,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 prefix = "No problem, let's revisit that. "
 
             if prefix is not None:
-                # Re-derive the next question from the reset state rather
-                # than treating the edit-request text itself as an answer.
-                reply, spec_update = route_conversation("", spec_for_routing, routing_front_locked, image_uploaded)
+                # Re-run routing on the reset state using the customer's
+                # actual message (not an empty string). If they already
+                # named the new value in their edit request (e.g. "change
+                # to landscape"), the freshly-reopened gate's own
+                # classifier will resolve it directly in this same turn.
+                # If they only named the concept without a value (e.g.
+                # "let's change the orientation"), that same classifier
+                # correctly falls back to its normal off-topic re-ask.
+                # (Passing "" here used to force the gate to guess from
+                # nothing, which is unreliable and caused garbled replies.)
+                reply, spec_update = route_conversation(user_message, spec_for_routing, routing_front_locked, image_uploaded)
                 reply = prefix + reply
             else:
                 reply, spec_update = route_conversation(user_message, current_spec, front_locked, image_uploaded)

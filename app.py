@@ -6,6 +6,7 @@ import os
 import re
 import string
 import traceback
+import urllib.parse
 
 API_KEY = os.environ.get("GROQ_API_KEY", "")
 if not API_KEY:
@@ -129,6 +130,57 @@ BACK_FIELDS = [
     {"key": "cta",      "label": "a call to action",      "type": "text",
      "question": "Do you want a call-to-action, like 'Call now' or 'Visit us online'?"},
 ]
+
+# ---------------------------------------------------------------------------
+# BACK TEMPLATE PICKER — a closed-ended gate asked once, right before the
+# 12 field questions start, so the customer picks how their answered fields
+# will be visually arranged. Every template can still render every field the
+# customer answers "yes" to (nothing is ever hidden) — comfortable_field_count
+# is only used later to offer switching to a roomier layout if they end up
+# filling in more than a template comfortably shows.
+# ---------------------------------------------------------------------------
+
+BACK_TEMPLATES = [
+    {"id": "classic_centered", "label": "Classic Centered",
+     "description": "Everything centered with generous spacing — timeless and formal",
+     "keywords": ["classic", "centered", "center", "formal", "timeless"],
+     "comfortable_field_count": 6},
+    {"id": "left_block", "label": "Left-Aligned Block",
+     "description": "Bold name/title/company header with a left-aligned contact list below",
+     "keywords": ["left", "block", "left-aligned", "left aligned"],
+     "comfortable_field_count": 8},
+    {"id": "icon_list", "label": "Icon List",
+     "description": "A vertical list with a small icon next to each contact detail",
+     "keywords": ["icon", "icons", "list"],
+     "comfortable_field_count": 9},
+    {"id": "split_two_column", "label": "Split Two-Column",
+     "description": "Contact info on one side, QR code or image on the other, divided by a line",
+     "keywords": ["split", "two column", "two-column", "column"],
+     "comfortable_field_count": 7},
+    {"id": "top_banner", "label": "Top Banner",
+     "description": "A solid color band across the top with name and title, remaining details below",
+     "keywords": ["banner", "band", "top banner"],
+     "comfortable_field_count": 8},
+    {"id": "bordered_frame", "label": "Bordered Frame",
+     "description": "A decorative border framing the centered content",
+     "keywords": ["border", "frame", "bordered", "framed"],
+     "comfortable_field_count": 6},
+    {"id": "bottom_corner", "label": "Bottom-Corner Minimal",
+     "description": "Just the essentials tucked in a corner, with lots of white space",
+     "keywords": ["corner", "minimal", "minimalist", "simple"],
+     "comfortable_field_count": 3},
+    {"id": "qr_forward", "label": "QR-Forward",
+     "description": "A large QR code (or image) as the centerpiece with brief text below",
+     "keywords": ["qr", "qr code", "qr-forward", "scan"],
+     "comfortable_field_count": 3},
+]
+BACK_TEMPLATE_BY_ID = {t["id"]: t for t in BACK_TEMPLATES}
+
+BACK_TEMPLATE_QUESTION = (
+    "How would you like the back laid out? Pick a style: "
+    + "; ".join(f"{i + 1}) {t['label']}" for i, t in enumerate(BACK_TEMPLATES))
+    + ". (You can click one of the previews, or just tell me the name or number.)"
+)
 
 SKIP_WORDS = {
     "no", "nope", "skip", "none", "n/a", "na", "nah", "not needed",
@@ -292,20 +344,99 @@ def propose_confirmation(field, extraction, contact):
     return reply, update
 
 
-def commit_value(field, value, contact):
+def commit_value(field, value, contact, back_template=None):
     contact[field["key"]] = value
+    if field["key"] == "qr_code" and value:
+        # Saying "yes" to a QR code no longer just locks in a bool — it opens
+        # a small upload-vs-generate sub-flow (see handle_qr_subflow) before
+        # moving on to the next field.
+        return start_qr_subflow(contact)
+    return finish_or_advance(contact, back_template)
+
+
+def finish_or_advance(contact, back_template=None):
+    """Shared "what's next" step used after any field (or the QR sub-flow)
+    is committed: either ask the next unanswered field, or — once every
+    field has been resolved — hand off to finish_back_fields, which checks
+    whether the chosen template comfortably fits everything collected."""
     upcoming = next_unanswered_field(contact)
     if upcoming:
-        reply = f"Locked in.\n\n{upcoming['question']}"
-    else:
-        reply = ("That's everything I need for the back! Want to review it, "
-                  "change anything, or download your card?")
+        update = {
+            "contact": contact,
+            "pending_field": None,
+            "pending_stage": None,
+            "pending_value": None,
+            "back_complete": False,
+            "capacity_check_pending": False,
+        }
+        return f"Locked in.\n\n{upcoming['question']}", update
+    return finish_back_fields(contact, back_template)
+
+
+def count_filled_back_fields(contact):
+    """How many of the 12 fields the customer actually kept (answered
+    "yes"/provided a value), as opposed to skipping."""
+    count = 0
+    for field in BACK_FIELDS:
+        value = contact.get(field["key"])
+        if field["type"] == "bool":
+            if value:
+                count += 1
+        else:
+            if value:
+                count += 1
+    return count
+
+
+def suggest_roomier_templates(current_id, needed_count):
+    """The 1-2 templates (other than the current one) best suited to fit
+    `needed_count` fields, preferring the smallest capacity that still fits."""
+    others = [t for t in BACK_TEMPLATES if t["id"] != current_id]
+    fits = [t for t in others if t["comfortable_field_count"] >= needed_count]
+    fits.sort(key=lambda t: t["comfortable_field_count"])
+    if fits:
+        return fits[:2]
+    # Nothing comfortably fits everything — offer the two roomiest options.
+    return sorted(others, key=lambda t: -t["comfortable_field_count"])[:2]
+
+
+def finish_back_fields(contact, back_template):
+    """Called the moment the last of the 12 back fields has been resolved.
+    If the chosen template doesn't comfortably fit how much the customer
+    actually kept, offer switching to something roomier before handing off
+    to the normal review/download prompt — never silently dropping a field
+    either way, only ever adjusting compactness."""
+    template = BACK_TEMPLATE_BY_ID.get(back_template)
+    filled = count_filled_back_fields(contact)
+    if template and filled > template["comfortable_field_count"]:
+        suggestions = suggest_roomier_templates(back_template, filled)
+        names = " or ".join(t["label"] for t in suggestions)
+        reply = (
+            f"You've added {filled} details — more than {template['label']} "
+            f"usually shows well. Want to switch to something roomier like "
+            f"{names}, or keep {template['label']} and fit everything in anyway?"
+        )
+        update = {
+            "contact": contact,
+            "pending_field": None,
+            "pending_stage": None,
+            "pending_value": None,
+            "back_complete": True,
+            "capacity_check_pending": True,
+            "capacity_suggestions": [t["id"] for t in suggestions],
+        }
+        return reply, update
+
+    reply = ("That's everything I need for the back! Want to review it, "
+              "change anything, or download your card?")
     update = {
         "contact": contact,
         "pending_field": None,
         "pending_stage": None,
         "pending_value": None,
-        "back_complete": upcoming is None,
+        "back_complete": True,
+        "capacity_check_pending": False,
+        "capacity_suggestions": [],
     }
     return reply, update
 
@@ -317,7 +448,108 @@ def clear_pending(contact, back_complete):
         "pending_stage": None,
         "pending_value": None,
         "back_complete": back_complete,
+        "capacity_check_pending": False,
     }
+
+
+# ---------------------------------------------------------------------------
+# QR CODE / BACK IMAGE SUB-FLOW — reached right after the customer answers
+# "yes" to the qr_code field. Broadens the old plain yes/no into: upload an
+# image, or have a real, scannable QR code generated from a URL. Its own
+# small Python-owned gate sequence (deterministic — the vocabulary here is
+# narrow enough that a keyword classifier is reliable, matching this
+# project's pattern of never leaving a decision to open-ended guessing).
+# ---------------------------------------------------------------------------
+
+QR_SOURCE_QUESTION = (
+    "Do you have an image ready to upload, or would you like me to "
+    "generate a QR code from a URL, like your website?"
+)
+QR_URL_QUESTION = "What URL should the QR code link to?"
+
+UPLOAD_IMAGE_WORDS = {
+    "upload", "have one", "have an image", "i have one", "already have",
+    "got one", "own image", "i have it", "have a file", "have a logo",
+    "have an icon",
+}
+GENERATE_QR_WORDS = {
+    "generate", "create", "make one", "make it", "url", "link",
+    "generate one", "make a qr code", "qr code", "website",
+}
+
+
+def _clean_qr_url(text):
+    """Very light deterministic clean-up: add a scheme if missing, and
+    reject anything that clearly isn't a URL rather than guessing."""
+    candidate = text.strip().strip("\"'\u201c\u201d\u2018\u2019 ")
+    if not candidate:
+        return None
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+        candidate = "https://" + candidate.lstrip("/")
+    domain_part = candidate.split("://", 1)[-1]
+    if "." not in domain_part or " " in domain_part:
+        return None
+    return candidate
+
+
+def start_qr_subflow(contact):
+    update = {
+        "contact": contact,
+        "pending_field": "qr_code",
+        "pending_stage": "qr_source",
+        "pending_value": None,
+        "back_complete": False,
+        "capacity_check_pending": False,
+    }
+    return QR_SOURCE_QUESTION, update
+
+
+def handle_qr_subflow(user_message, current_spec):
+    contact = dict(current_spec.get("contact", {}) or {})
+    stage = current_spec.get("pending_stage")
+    back_template = current_spec.get("back_template")
+    lower = user_message.lower().strip(" .!")
+
+    def _stay(stage_name, reply_text):
+        update = {
+            "contact": contact,
+            "pending_field": "qr_code",
+            "pending_stage": stage_name,
+            "pending_value": None,
+            "back_complete": False,
+            "capacity_check_pending": False,
+        }
+        return reply_text, update
+
+    if stage == "qr_source":
+        if lower in SKIP_WORDS or any(_starts_with_phrase(lower, w) for w in SKIP_WORDS):
+            contact["qr_code"] = False
+            return finish_or_advance(contact, back_template)
+        if any(w in lower for w in UPLOAD_IMAGE_WORDS):
+            return _stay("qr_awaiting_upload", "Great — go ahead and upload your image whenever you're ready.")
+        if any(w in lower for w in GENERATE_QR_WORDS):
+            return _stay("qr_url", QR_URL_QUESTION)
+        return _stay("qr_source", QR_SOURCE_QUESTION)
+
+    if stage == "qr_awaiting_upload":
+        if contact.get("back_image"):
+            return finish_or_advance(contact, back_template)
+        return _stay("qr_awaiting_upload", "Whenever you're ready, use the upload button to add your image.")
+
+    if stage == "qr_url":
+        url = _clean_qr_url(user_message)
+        if not url:
+            return _stay("qr_url", "I didn't catch a web address there — what URL should the QR code link to?")
+        contact["back_image"] = (
+            "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data="
+            + urllib.parse.quote(url, safe="")
+        )
+        contact["back_image_kind"] = "qr"
+        reply, update = finish_or_advance(contact, back_template)
+        return f"Done — I generated a QR code linking to {url}.\n\n{reply}", update
+
+    # Safety net — shouldn't normally be reached.
+    return finish_or_advance(contact, back_template)
 
 
 def handle_back_side_deterministic(user_message, current_spec):
@@ -345,7 +577,7 @@ def handle_back_side_deterministic(user_message, current_spec):
         intent = classify_confirmation(user_message)
 
         if intent == "yes":
-            return commit_value(field, pending_value, contact)
+            return commit_value(field, pending_value, contact, current_spec.get("back_template"))
 
         if intent == "no":
             # If they packed the correction into the same message
@@ -570,7 +802,7 @@ def handle_back_side(user_message, current_spec):
 
     if stage == "await_confirm":
         if intent == "confirm_yes":
-            return commit_value(field, pending_value, contact)
+            return commit_value(field, pending_value, contact, current_spec.get("back_template"))
         if intent == "confirm_no":
             return ask_for_value(field, contact)
         extraction = _resolve_back_extraction(intent, result.get("value"), field["type"])
@@ -853,11 +1085,11 @@ def handle_orientation_gate(user_message, current_spec, side):
 
     if side == "front":
         if current_spec.get("card_sides") == "one":
-            reply = f"Got it. {BACK_FIELDS[0]['question']}"
+            reply = f"Got it. {BACK_TEMPLATE_QUESTION}"
         else:
             reply = f"Got it. {IMAGE_GATE_QUESTION}"
     else:
-        reply = f"Got it. {BACK_FIELDS[0]['question']}"
+        reply = f"Got it. {BACK_TEMPLATE_QUESTION}"
 
     return reply, spec_update
 
@@ -984,6 +1216,175 @@ def handle_image_gate(user_message, current_spec):
 
 
 # ---------------------------------------------------------------------------
+# BACK TEMPLATE GATE — asked once, right before the 12 field questions start.
+# Same closed-ended pattern as every other gate: LLM classifies which of the
+# 8 templates the customer meant (or off_topic), with a deterministic
+# keyword + numeric fallback.
+# ---------------------------------------------------------------------------
+
+BACK_TEMPLATE_INTENT_SYSTEM_PROMPT = (
+    "You are an intent classifier for a single question in a business card "
+    "design tool asking the customer to choose a back-layout template from "
+    "a fixed list.\n\nThe choices, in order, are:\n"
+    + "\n".join(
+        f"{i + 1}. {t['id']} - {t['label']}: {t['description']}"
+        for i, t in enumerate(BACK_TEMPLATES)
+    )
+    + """
+
+Respond with ONLY this JSON shape, nothing else:
+{
+  "intent": "<one of the ids above>" | "off_topic",
+  "reply_to_user": ""
+}
+
+Rules:
+- Match the customer's wording (including a bare number like "2" or "the
+  second one", or a loose description like "the one with icons") to the
+  closest listed id.
+- "off_topic": the customer asked a question, made small talk, or said
+  something that doesn't clearly pick one of the choices. Write a short,
+  friendly "reply_to_user" that briefly responds, then re-ask the same
+  question. Never guess a template here if there's real doubt.
+"""
+)
+
+_BACK_TEMPLATE_IDS = {t["id"] for t in BACK_TEMPLATES}
+
+
+def interpret_back_template_reply(user_message):
+    if not client:
+        raise RuntimeError("GROQ_API_KEY is missing or empty")
+
+    messages = [
+        {"role": "system", "content": BACK_TEMPLATE_INTENT_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Customer: {user_message}"},
+    ]
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+        timeout=15,
+    )
+    raw = completion.choices[0].message.content.strip()
+    result = json.loads(raw)
+    if result.get("intent") not in _BACK_TEMPLATE_IDS | {"off_topic"}:
+        raise ValueError("Model returned an unrecognized intent")
+    return result
+
+
+def _back_template_fallback(user_message):
+    lower = user_message.lower().strip(" .!")
+    if lower.isdigit():
+        idx = int(lower) - 1
+        if 0 <= idx < len(BACK_TEMPLATES):
+            return {"intent": BACK_TEMPLATES[idx]["id"], "reply_to_user": ""}
+    for t in BACK_TEMPLATES:
+        if any(kw in lower for kw in t["keywords"]):
+            return {"intent": t["id"], "reply_to_user": ""}
+    return {"intent": "off_topic", "reply_to_user": BACK_TEMPLATE_QUESTION}
+
+
+def handle_back_template_gate(user_message, current_spec):
+    try:
+        result = interpret_back_template_reply(user_message)
+    except Exception as e:
+        print(f"Back-template gate LLM interpretation failed, using fallback: {e}")
+        result = _back_template_fallback(user_message)
+
+    intent = result.get("intent")
+    spec_update = dict(current_spec)
+
+    if intent == "off_topic":
+        reply = result.get("reply_to_user") or BACK_TEMPLATE_QUESTION
+        return reply, spec_update
+
+    spec_update["back_template"] = intent
+    label = BACK_TEMPLATE_BY_ID[intent]["label"]
+    # Normally this gate is reached once, before any field has been asked,
+    # so BACK_FIELDS[0] is correct. But it can also be reached mid-checklist
+    # (customer says "actually use a different template" partway through),
+    # in which case resume at whatever field is still unanswered instead of
+    # restarting the whole checklist — and clear any stale pending state
+    # since we're re-asking that field's question fresh.
+    contact = current_spec.get("contact") or {}
+    next_field = next_unanswered_field(contact) or BACK_FIELDS[0]
+    spec_update["pending_field"] = None
+    spec_update["pending_stage"] = None
+    spec_update["pending_value"] = None
+    reply = f"Great choice — {label} it is.\n\n{next_field['question']}"
+    return reply, spec_update
+
+
+# ---------------------------------------------------------------------------
+# BACK TEMPLATE CAPACITY CHECK — reached once, right after the last of the
+# 12 field questions is resolved, only when the customer filled in more
+# fields than the chosen template comfortably shows (see finish_back_fields).
+# Deterministic keyword matching against the 1-2 suggested templates, plus a
+# numeric shortcut and a set of "keep the current one" phrases.
+# ---------------------------------------------------------------------------
+
+KEEP_TEMPLATE_WORDS = {
+    "keep", "stay", "fine as is", "leave it", "it's fine", "its fine",
+    "no thanks", "no", "same", "current", "keep it", "keep this one",
+}
+
+
+def handle_back_template_capacity_check(user_message, current_spec):
+    contact = dict(current_spec.get("contact", {}) or {})
+    suggestion_ids = current_spec.get("capacity_suggestions") or []
+    lower = user_message.lower().strip(" .!")
+    spec_update = dict(current_spec)
+    spec_update["contact"] = contact
+
+    matched = None
+    for tid in suggestion_ids:
+        t = BACK_TEMPLATE_BY_ID.get(tid)
+        if not t:
+            continue
+        if t["label"].lower() in lower or any(kw in lower for kw in t["keywords"]):
+            matched = tid
+            break
+    if matched is None and lower.isdigit():
+        idx = int(lower) - 1
+        if 0 <= idx < len(suggestion_ids):
+            matched = suggestion_ids[idx]
+
+    if matched:
+        spec_update["back_template"] = matched
+        spec_update["capacity_check_pending"] = False
+        spec_update["capacity_suggestions"] = []
+        label = BACK_TEMPLATE_BY_ID[matched]["label"]
+        reply = (
+            f"Switched to {label}. Does this look like what you want, or "
+            f"would you like to change anything before we send it off for printing?"
+        )
+        return reply, spec_update
+
+    if any(w in lower for w in KEEP_TEMPLATE_WORDS):
+        spec_update["capacity_check_pending"] = False
+        spec_update["capacity_suggestions"] = []
+        reply = ("Sounds good, keeping the current layout — everything will "
+                  "still be shown, just a bit more compact. Does this look "
+                  "like what you want, or would you like to change anything "
+                  "before we send it off for printing?")
+        return reply, spec_update
+
+    # Unclear — re-ask the same closed question instead of guessing.
+    template = BACK_TEMPLATE_BY_ID.get(current_spec.get("back_template"))
+    template_label = template["label"] if template else "the current layout"
+    names = " or ".join(
+        BACK_TEMPLATE_BY_ID[t]["label"] for t in suggestion_ids if t in BACK_TEMPLATE_BY_ID
+    )
+    reply = (
+        f"Just to confirm — want to switch to something roomier like "
+        f"{names}, or keep {template_label} and fit everything in anyway?"
+    )
+    return reply, spec_update
+
+
+# ---------------------------------------------------------------------------
 # GLOBAL EDIT-REQUEST CHECK — runs first, before any stage-specific routing.
 # Lets the customer change an already-resolved gate decision (sides,
 # orientation, image) from anywhere in the conversation, not just while
@@ -1002,7 +1403,7 @@ the customer's current confirmed choices and their latest message.
 
 Respond with ONLY this JSON shape, nothing else:
 {
-  "intent": "change_sides" | "change_orientation" | "change_image" | "none",
+  "intent": "change_sides" | "change_orientation" | "change_image" | "change_back_template" | "none",
   "reply_to_user": ""
 }
 
@@ -1019,20 +1420,25 @@ Rules:
   the customer EXPLICITLY mentions the image/logo/photo while asking to
   add/remove/reconsider it, in any wording ("I do have a logo after all",
   "actually let's skip the image", "let's not use an image").
+- "change_back_template": ONLY if back_template is already decided (not
+  null) AND the customer EXPLICITLY asks to change the back layout/template,
+  in any wording ("actually use a different layout", "can we change the
+  template", "let's try the icon list style instead").
 - "none": anything else — a normal answer to whatever's currently being
   asked, a back-side detail, small talk, or a front-design tweak that
-  doesn't touch sides/orientation/image-yes-no. This should be the most
-  common answer. If the field in question is still null (not yet decided),
-  always answer "none" — that means it's a first-time answer to the
-  current question, not a change request.
+  doesn't touch sides/orientation/image-yes-no/back_template. This should be
+  the most common answer. If the field in question is still null (not yet
+  decided), always answer "none" — that means it's a first-time answer to
+  the current question, not a change request.
 - IMPORTANT — vague requests with NO specific concept named: a bare "go
   back", "undo", "undo that", "undo it", "never mind", "revert", "revert
-  that", or similar, WITHOUT explicitly naming sides/orientation/image, must
-  ALWAYS be "none". Do not guess which earlier decision they mean — only
-  something else (already in progress elsewhere) handles those. Only
-  classify as a change_* intent when the customer names the specific concept
-  (e.g. "undo the two-sided thing", "go back to landscape", "undo the
-  image" DO count; a bare "go back" or "undo" alone does NOT).
+  that", or similar, WITHOUT explicitly naming sides/orientation/image/
+  template/layout, must ALWAYS be "none". Do not guess which earlier
+  decision they mean — only something else (already in progress elsewhere)
+  handles those. Only classify as a change_* intent when the customer names
+  the specific concept (e.g. "undo the two-sided thing", "go back to
+  landscape", "undo the image", "undo the template" DO count; a bare "go
+  back" or "undo" alone does NOT).
 """
 
 CHANGE_TRIGGER_WORDS = (
@@ -1051,7 +1457,8 @@ def interpret_global_edit_request(user_message, current_spec):
         f"card_sides={current_spec.get('card_sides')}, "
         f"front_orientation={current_spec.get('front_orientation')}, "
         f"back_orientation={current_spec.get('back_orientation')}, "
-        f"image_declined={current_spec.get('image_declined')}"
+        f"image_declined={current_spec.get('image_declined')}, "
+        f"back_template={current_spec.get('back_template')}"
     )
     messages = [
         {"role": "system", "content": GLOBAL_EDIT_SYSTEM_PROMPT},
@@ -1069,7 +1476,10 @@ def interpret_global_edit_request(user_message, current_spec):
     )
     raw = completion.choices[0].message.content.strip()
     result = json.loads(raw)
-    if result.get("intent") not in {"change_sides", "change_orientation", "change_image", "none"}:
+    if result.get("intent") not in {
+        "change_sides", "change_orientation", "change_image",
+        "change_back_template", "none",
+    }:
         raise ValueError("Model returned an unrecognized intent")
     return result
 
@@ -1104,6 +1514,12 @@ def _global_edit_fallback(user_message, current_spec):
     ):
         return {"intent": "change_image"}
 
+    if current_spec.get("back_template") is not None and (
+        "template" in lower or "layout" in lower
+        or any(kw in lower for t in BACK_TEMPLATES for kw in t["keywords"])
+    ):
+        return {"intent": "change_back_template"}
+
     return {"intent": "none"}
 
 
@@ -1122,7 +1538,7 @@ def route_conversation(user_message, current_spec, front_locked, image_uploaded)
     if card_sides == "one":
         if front_orientation is None:
             return handle_orientation_gate(user_message, current_spec, "front")
-        return handle_back_side(user_message, current_spec)
+        return route_back_flow(user_message, current_spec)
 
     # card_sides == "two"
     if front_orientation is None:
@@ -1130,10 +1546,23 @@ def route_conversation(user_message, current_spec, front_locked, image_uploaded)
     if front_locked:
         if back_orientation is None:
             return handle_orientation_gate(user_message, current_spec, "back")
-        return handle_back_side(user_message, current_spec)
+        return route_back_flow(user_message, current_spec)
     if image_declined is None:
         return handle_image_gate(user_message, current_spec)
     return handle_front_side(user_message, current_spec, image_uploaded)
+
+
+def route_back_flow(user_message, current_spec):
+    """Once orientation is settled for the back side, this decides between
+    the template picker, the QR/image sub-flow, the capacity check, and the
+    normal field-by-field checklist — in that priority order."""
+    if current_spec.get("back_template") is None:
+        return handle_back_template_gate(user_message, current_spec)
+    if current_spec.get("pending_stage") in ("qr_source", "qr_awaiting_upload", "qr_url"):
+        return handle_qr_subflow(user_message, current_spec)
+    if current_spec.get("capacity_check_pending"):
+        return handle_back_template_capacity_check(user_message, current_spec)
+    return handle_back_side(user_message, current_spec)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -1198,6 +1627,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     routing_front_locked = False
                     front_locked_override = False
                 prefix = "No problem, let's revisit that. "
+            elif edit_intent == "change_back_template" and spec_for_routing.get("back_template") is not None:
+                spec_for_routing["back_template"] = None
+                spec_for_routing["capacity_check_pending"] = False
+                spec_for_routing["capacity_suggestions"] = []
+                prefix = "Sure, let's pick a different layout. "
 
             if prefix is not None:
                 # Re-run routing on the reset state using the customer's
@@ -1217,17 +1651,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 routing_front_locked = front_locked
 
             # Tell the frontend whether to show the visual orientation
-            # picker for whatever question is about to be asked.
+            # picker, back-template picker, or capacity-check suggestions
+            # for whatever question is about to be asked. spec_update from
+            # the back-field/QR handlers is often a partial dict (it doesn't
+            # repeat card_sides/orientation/back_template), so merge it onto
+            # the full previous state first — current_spec always has the
+            # complete picture since the client sends its full design_spec
+            # on every request.
+            merged_spec = {**current_spec, **spec_update}
             awaiting_gate = None
-            if spec_update.get("card_sides") is not None:
-                if spec_update.get("front_orientation") is None:
+            if merged_spec.get("card_sides") is not None:
+                if merged_spec.get("front_orientation") is None:
                     awaiting_gate = "orientation_front"
                 elif (
-                    spec_update.get("card_sides") == "two"
+                    merged_spec.get("card_sides") == "two"
                     and routing_front_locked
-                    and spec_update.get("back_orientation") is None
+                    and merged_spec.get("back_orientation") is None
                 ):
                     awaiting_gate = "orientation_back"
+                else:
+                    back_stage_reached = (
+                        merged_spec.get("card_sides") == "one"
+                        or (merged_spec.get("card_sides") == "two" and routing_front_locked)
+                    )
+                    if back_stage_reached:
+                        if merged_spec.get("back_template") is None:
+                            awaiting_gate = "back_template"
+                        elif merged_spec.get("capacity_check_pending"):
+                            awaiting_gate = "back_template_capacity"
+                        elif merged_spec.get("pending_stage") == "qr_awaiting_upload":
+                            awaiting_gate = "qr_image_upload"
 
             response = {"reply_to_user": reply, "design_spec": spec_update, "awaiting_gate": awaiting_gate}
             if front_locked_override is not None:

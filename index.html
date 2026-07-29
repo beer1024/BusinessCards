@@ -57,6 +57,10 @@ body { background: var(--bg); color: var(--text); display: flex; height: 100vh; 
 .orientation-btn:hover .orientation-rect { border-color: var(--accent); }
 .orientation-rect.landscape { width: 46px; height: 30px; }
 .orientation-rect.portrait { width: 30px; height: 46px; }
+.template-picker { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-self: flex-start; margin-top: -4px; max-width: 92%; }
+.template-btn { background: #0f172a; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer; font-size: 0.74rem; font-weight: 600; text-align: left; display: flex; align-items: center; gap: 6px; }
+.template-btn:hover { border-color: var(--accent); color: var(--accent); }
+.template-icon { font-size: 1rem; }
 .spec-readout { position: absolute; bottom: 24px; width: min(420px, 90%); background: rgba(30,41,59,.88); border: 1px solid var(--border); padding: 12px 16px; border-radius: 10px; font-size: 0.78rem; color: var(--muted); }
 .spec-readout strong { color: var(--text); }
 .download-btn { position: absolute; bottom: 24px; right: 24px; padding: 10px 18px; font-size: 0.85rem; }
@@ -144,6 +148,24 @@ function nextBackQuestion() {
     return "Looks like the back is already complete! Want to review it, or is it ready to download?";
 }
 
+// Keep this list in sync with BACK_TEMPLATES in app.py — id/label/
+// comfortable_field_count must match exactly.
+const BACK_TEMPLATES = [
+    { id: 'classic_centered', label: 'Classic Centered', icon: '⊙', comfortable_field_count: 6 },
+    { id: 'left_block', label: 'Left-Aligned Block', icon: '▤', comfortable_field_count: 8 },
+    { id: 'icon_list', label: 'Icon List', icon: '☰', comfortable_field_count: 9 },
+    { id: 'split_two_column', label: 'Split Two-Column', icon: '▥', comfortable_field_count: 7 },
+    { id: 'top_banner', label: 'Top Banner', icon: '▬', comfortable_field_count: 8 },
+    { id: 'bordered_frame', label: 'Bordered Frame', icon: '▢', comfortable_field_count: 6 },
+    { id: 'bottom_corner', label: 'Bottom-Corner Minimal', icon: '◺', comfortable_field_count: 3 },
+    { id: 'qr_forward', label: 'QR-Forward', icon: '▦', comfortable_field_count: 3 },
+];
+
+const BACK_TEMPLATE_QUESTION =
+    "How would you like the back laid out? Pick a style: " +
+    BACK_TEMPLATES.map((t, i) => `${i + 1}) ${t.label}`).join('; ') +
+    ". (You can click one of the previews, or just tell me the name or number.)";
+
 const CONFIRM_PHRASES = [
     'looks good', 'look good', 'its good', "it's good", 'thats good', "that's good",
     'lock it in', 'lock it', 'move to back', 'move on to the back', 'front is good',
@@ -203,6 +225,9 @@ const state = {
         front_orientation: null,
         back_orientation: null,
         image_declined: null,
+        back_template: null,
+        capacity_check_pending: false,
+        capacity_suggestions: [],
         front_layout: 'Waiting for image',
         back_layout: 'Not started',
         style_vibe: 'Clean professional',
@@ -221,7 +246,8 @@ const state = {
         contact: {
             name: null, title: null, company: null, phone: null, email: null,
             website: null, address: null, social: null, qr_code: null,
-            tagline: null, services: null, cta: null
+            tagline: null, services: null, cta: null,
+            back_image: null, back_image_kind: null
         }
     },
     originalImageUrl: null,
@@ -673,6 +699,184 @@ function buildBackCardImage(cb) {
     cb(canvas.toDataURL('image/png'));
 }
 
+// Counts how many of the 12 back fields are actually filled with truthy
+// values (skips nulls/false/empty strings) — drives the compact-mode
+// decision when the customer has more content than the template expects.
+function filledBackFieldCount(c) {
+    if (!c) return 0;
+    return BACK_FIELD_KEYS.filter(k => c[k]).length;
+}
+
+// Renders whatever image the customer added (upload or generated QR) as
+// an <img>, or null if nothing was added.
+function backImageHTML(c, maxSize) {
+    if (!c || !c.back_image) return '';
+    const label = c.back_image_kind === 'qr' ? 'QR code' : 'image';
+    return `<img src="${c.back_image}" alt="${label}" style="max-width:${maxSize}px;max-height:${maxSize}px;border-radius:4px;object-fit:contain;">`;
+}
+
+// Builds the plain contact-detail lines (phone/email/website/address/
+// social) shared across every template layout.
+function contactLines(c, opts) {
+    opts = opts || {};
+    const icons = opts.icons || {};
+    const lines = [];
+    const push = (key, val, extraStyle) => {
+        if (!val) return;
+        const icon = icons[key] ? `${icons[key]} ` : '';
+        lines.push(`<div style="${extraStyle || ''}">${icon}${esc(val)}</div>`);
+    };
+    push('phone', c.phone);
+    push('email', c.email);
+    push('website', c.website, 'color:#0284c7;');
+    push('address', c.address);
+    push('social', c.social);
+    return lines.join('');
+}
+
+// Renders the customer's chosen back-side layout template. `templateId`
+// defaults to 'left_block' (today's original look) until a template has
+// been picked, so nothing breaks before that gate resolves. `compact`
+// scales font sizes down when the filled field count exceeds the
+// template's comfortable_field_count (set by finish_back_fields on the
+// server) — every field is always shown, just more tightly.
+function renderTemplateBody(templateId, c, compact) {
+    const nameSz = compact ? '0.92rem' : '1.05rem';
+    const bodySz = compact ? '0.68rem' : '0.78rem';
+    const gapTop = compact ? '5px' : '8px';
+
+    const header = () => {
+        let h = '';
+        if (c.name) h += `<div style="font-weight:700;font-size:${nameSz};color:#0f172a;margin-bottom:2px;">${esc(c.name)}</div>`;
+        if (c.title) h += `<div style="color:#64748b;font-size:${bodySz};margin-bottom:2px;">${esc(c.title)}</div>`;
+        if (c.company) h += `<div style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
+        return h;
+    };
+    const extras = () => {
+        let e = '';
+        if (c.tagline) e += `<div style="margin-top:${gapTop};font-size:${bodySz};font-style:italic;color:#475569;">“${esc(c.tagline)}”</div>`;
+        if (c.services) e += `<div style="margin-top:6px;font-size:${bodySz};color:#64748b;">${esc(c.services)}</div>`;
+        if (c.cta) e += `<div style="margin-top:${gapTop};font-size:${bodySz};font-weight:600;color:#0f172a;">${esc(c.cta)}</div>`;
+        return e;
+    };
+    const anyContent = c.name || c.title || c.company || c.phone || c.email || c.website ||
+        c.address || c.social || c.tagline || c.services || c.cta || c.back_image;
+    if (!anyContent) return '';
+
+    switch (templateId) {
+        case 'classic_centered': {
+            const lines = contactLines(c);
+            return `<div style="text-align:center;">
+                ${header()}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                ${extras()}
+                ${c.back_image ? `<div style="margin-top:10px;display:flex;justify-content:center;">${backImageHTML(c, 60)}</div>` : ''}
+            </div>`;
+        }
+        case 'icon_list': {
+            const lines = contactLines(c, { icons: { phone: '📞', email: '✉️', website: '🌐', address: '📍', social: '👤' } });
+            return `<div>
+                ${header()}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.7;color:#334155;">${lines}</div>` : ''}
+                ${extras()}
+                ${c.back_image ? `<div style="margin-top:10px;">${backImageHTML(c, 50)}</div>` : ''}
+            </div>`;
+        }
+        case 'split_two_column': {
+            const lines = contactLines(c);
+            return `<div style="display:flex;gap:12px;height:100%;">
+                <div style="flex:1;border-right:1px solid #e2e8f0;padding-right:12px;">
+                    ${header()}
+                    ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                    ${extras()}
+                </div>
+                <div style="width:70px;display:flex;align-items:center;justify-content:center;">
+                    ${c.back_image ? backImageHTML(c, 65) : '<span style="font-size:0.68rem;color:#94a3b8;">[ QR ]</span>'}
+                </div>
+            </div>`;
+        }
+        case 'top_banner': {
+            const lines = contactLines(c);
+            return `<div style="height:100%;display:flex;flex-direction:column;">
+                <div style="background:#0f172a;color:#fff;padding:8px 10px;margin:-2px -2px 8px -2px;border-radius:4px 4px 0 0;">
+                    ${c.name ? `<div style="font-weight:700;font-size:${nameSz};">${esc(c.name)}</div>` : ''}
+                    ${c.title ? `<div style="font-size:${bodySz};opacity:.85;">${esc(c.title)}</div>` : ''}
+                </div>
+                ${c.company ? `<div style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>` : ''}
+                ${lines ? `<div style="font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                ${extras()}
+                ${c.back_image ? `<div style="margin-top:8px;">${backImageHTML(c, 50)}</div>` : ''}
+            </div>`;
+        }
+        case 'bordered_frame': {
+            const lines = contactLines(c);
+            return `<div style="border:2px solid #cbd5e1;border-radius:8px;padding:10px;height:calc(100% - 20px);text-align:center;">
+                ${header()}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                ${extras()}
+                ${c.back_image ? `<div style="margin-top:8px;display:flex;justify-content:center;">${backImageHTML(c, 50)}</div>` : ''}
+            </div>`;
+        }
+        case 'bottom_corner': {
+            const lines = contactLines(c);
+            return `<div style="height:100%;display:flex;flex-direction:column;justify-content:flex-end;">
+                ${c.back_image ? `<div style="margin-bottom:8px;">${backImageHTML(c, 50)}</div>` : ''}
+                ${header()}
+                ${lines ? `<div style="font-size:${bodySz};line-height:1.5;color:#334155;">${lines}</div>` : ''}
+                ${extras()}
+            </div>`;
+        }
+        case 'qr_forward': {
+            const lines = contactLines(c);
+            return `<div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+                ${c.back_image ? backImageHTML(c, 90) : '<div style="width:70px;height:70px;border:2px dashed #cbd5e1;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:0.68rem;color:#94a3b8;">QR</div>'}
+                <div style="margin-top:8px;">
+                    ${c.name ? `<div style="font-weight:700;font-size:${bodySz};color:#0f172a;">${esc(c.name)}</div>` : ''}
+                    ${lines ? `<div style="font-size:${bodySz};color:#334155;">${lines}</div>` : ''}
+                </div>
+            </div>`;
+        }
+        case 'left_block':
+        default: {
+            const lines = contactLines(c);
+            return `<div>
+                ${header()}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.5;color:#334155;">${lines}</div>` : ''}
+                ${extras()}
+                ${c.back_image ? `<div style="margin-top:10px;">${backImageHTML(c, 50)}</div>` : ''}
+            </div>`;
+        }
+    }
+}
+
+// Top-level BACK SIDE card renderer — wraps renderTemplateBody with the
+// lace-accent overlay and the footer bar, matching the front side's frame.
+function renderBackCardHTML(ds) {
+    const c = ds.contact || {};
+    const templateId = ds.back_template || 'left_block';
+    const template = BACK_TEMPLATES.find(t => t.id === templateId);
+    const compact = template ? filledBackFieldCount(c) > template.comfortable_field_count : false;
+
+    const lace = ds.has_lace_accents ?
+        `<div style="position:absolute;top:10px;right:12px;opacity:.55;">✨</div>
+         <div style="position:absolute;bottom:10px;left:12px;opacity:.55;">✨</div>` : '';
+
+    let content = renderTemplateBody(templateId, c, compact);
+    if (!content) {
+        content = `<p style="font-size:0.8rem;color:#64748b;">${esc(ds.back_layout || 'Back side ready for information')}</p>`;
+    }
+
+    return `
+        <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;position:relative;">
+            ${lace}
+            <div style="flex:1;min-height:0;overflow:hidden;">${content}</div>
+            <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;display:flex;justify-content:space-between;">
+                <span>Studio Spec</span>
+                <span style="font-weight:600;">3.5″ × 2.0″</span>
+            </div>
+        </div>`;
+}
+
 function render() {
     updateSidesUI();
     const card = document.getElementById('cardPreview');
@@ -713,44 +917,7 @@ function render() {
     }
 
     // BACK SIDE
-    const c = ds.contact || {};
-    const lace = ds.has_lace_accents ?
-        `<div style="position:absolute;top:10px;right:12px;opacity:.55;">✨</div>
-         <div style="position:absolute;bottom:10px;left:12px;opacity:.55;">✨</div>` : '';
-
-    let content = '';
-    if (c.name) content += `<div style="font-weight:700;font-size:1.05rem;color:#0f172a;margin-bottom:2px;">${esc(c.name)}</div>`;
-    if (c.title) content += `<div style="color:#64748b;font-size:0.82rem;margin-bottom:2px;">${esc(c.title)}</div>`;
-    if (c.company) content += `<div style="color:#334155;font-size:0.82rem;font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
-
-    if (c.phone || c.email || c.website || c.address || c.social) {
-        content += `<div style="margin-top:8px;font-size:0.78rem;line-height:1.5;color:#334155;">`;
-        if (c.phone) content += `<div>${esc(c.phone)}</div>`;
-        if (c.email) content += `<div>${esc(c.email)}</div>`;
-        if (c.website) content += `<div style="color:#0284c7;">${esc(c.website)}</div>`;
-        if (c.address) content += `<div>${esc(c.address)}</div>`;
-        if (c.social) content += `<div>${esc(c.social)}</div>`;
-        content += `</div>`;
-    }
-
-    if (c.tagline) content += `<div style="margin-top:8px;font-size:0.78rem;font-style:italic;color:#475569;">“${esc(c.tagline)}”</div>`;
-    if (c.services) content += `<div style="margin-top:6px;font-size:0.75rem;color:#64748b;">${esc(c.services)}</div>`;
-    if (c.cta) content += `<div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:#0f172a;">${esc(c.cta)}</div>`;
-    if (c.qr_code) content += `<div style="margin-top:10px;font-size:0.72rem;color:#64748b;">[ QR Code ]</div>`;
-
-    if (!content) {
-        content = `<p style="font-size:0.8rem;color:#64748b;">${esc(ds.back_layout || 'Back side ready for information')}</p>`;
-    }
-
-    card.innerHTML = `
-        <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;position:relative;">
-            ${lace}
-            <div>${content}</div>
-            <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;display:flex;justify-content:space-between;">
-                <span>Studio Spec</span>
-                <span style="font-weight:600;">3.5″ × 2.0″</span>
-            </div>
-        </div>`;
+    card.innerHTML = renderBackCardHTML(ds);
 }
 
 function appendMessage(role, text) {
@@ -788,6 +955,83 @@ function appendOrientationPicker() {
 }
 
 const ORIENTATION_BACK_QUESTION = "And for the back — landscape (wide) or portrait (tall)?";
+
+// Visual grid picker for the back-template gate — clicking a swatch sends
+// that template's id through the exact same path as typing its name.
+function appendBackTemplatePicker() {
+    const box = document.getElementById('chatMessages');
+    const wrap = document.createElement('div');
+    wrap.className = 'template-picker';
+    wrap.innerHTML = BACK_TEMPLATES.map(t => `
+        <button class="template-btn" type="button" data-value="${t.id}">
+            <span class="template-icon">${t.icon}</span>${esc(t.label)}
+        </button>`).join('');
+    wrap.querySelectorAll('.template-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            wrap.remove();
+            send(btn.dataset.value);
+        });
+    });
+    box.appendChild(wrap);
+    box.scrollTop = box.scrollHeight;
+}
+
+// Shown when the customer filled in more fields than the chosen template
+// comfortably fits — offers switching to 1-2 roomier suggestions, or
+// keeping the current template as-is.
+function appendCapacitySuggestions(suggestionIds) {
+    const box = document.getElementById('chatMessages');
+    const wrap = document.createElement('div');
+    wrap.className = 'template-picker';
+    const options = (suggestionIds || []).map(id => BACK_TEMPLATES.find(t => t.id === id)).filter(Boolean);
+    wrap.innerHTML = options.map(t => `
+        <button class="template-btn" type="button" data-value="${t.id}">
+            <span class="template-icon">${t.icon}</span>${esc(t.label)}
+        </button>`).join('') + `
+        <button class="template-btn" type="button" data-value="__keep__">
+            <span class="template-icon">✓</span>Keep current layout
+        </button>`;
+    wrap.querySelectorAll('.template-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            wrap.remove();
+            send(btn.dataset.value === '__keep__' ? 'keep the current layout' : btn.dataset.value);
+        });
+    });
+    box.appendChild(wrap);
+    box.scrollTop = box.scrollHeight;
+}
+
+// Shown when the QR/image sub-flow is waiting on an upload — a small
+// upload trigger appended right into the chat, same accessible-hidden-
+// input technique as the main Upload Image control.
+function appendBackImageUploadPrompt() {
+    const box = document.getElementById('chatMessages');
+    const wrap = document.createElement('div');
+    wrap.className = 'template-picker';
+    const inputId = 'backImageUpload_' + Date.now();
+    wrap.innerHTML = `
+        <label class="template-btn" for="${inputId}">
+            <span class="template-icon">📎</span>Upload Image
+        </label>
+        <input type="file" id="${inputId}" accept="image/*"
+               style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">`;
+    box.appendChild(wrap);
+    box.scrollTop = box.scrollHeight;
+    document.getElementById(inputId).addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            state.design_spec.contact.back_image = ev.target.result;
+            state.design_spec.contact.back_image_kind = 'upload';
+            wrap.remove();
+            render();
+            appendMessage('agent', 'Image received!');
+            callAgent("I've uploaded the image.");
+        };
+        reader.readAsDataURL(file);
+    });
+}
 
 async function callAgent(text) {
     // Front -> back transition is handled entirely client-side: no need to
@@ -948,9 +1192,16 @@ async function callAgent(text) {
 
         // Show the visual rectangle picker whenever the server is waiting
         // on a landscape/portrait answer, instead of relying on the user
-        // to type it correctly.
+        // to type it correctly. Same idea for the back-template picker,
+        // the capacity-check suggestions, and the QR/image upload prompt.
         if (typeof data.awaiting_gate === 'string' && data.awaiting_gate.startsWith('orientation')) {
             appendOrientationPicker();
+        } else if (data.awaiting_gate === 'back_template') {
+            appendBackTemplatePicker();
+        } else if (data.awaiting_gate === 'back_template_capacity') {
+            appendCapacitySuggestions(state.design_spec.capacity_suggestions);
+        } else if (data.awaiting_gate === 'qr_image_upload') {
+            appendBackImageUploadPrompt();
         }
 
         render();

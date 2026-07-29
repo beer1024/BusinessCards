@@ -100,6 +100,16 @@ adjustment as something the customer still needs to do.
 Never mention or modify contact information or anything about the back of
 the card. That is handled separately by a different system.
 
+If the customer already went through the text-only content checklist
+(business name, tagline, social/QR — handled by a separate Python-owned
+step before you're ever invoked), their content is already decided and
+locked in. Do not ask about business name, tagline, or social/QR again —
+your job at that point is strictly the visual side: layout, style, color,
+spacing, size, and any lace/decorative accents. If the customer wants to
+change the actual content (e.g. "change my tagline to..."), that's out of
+your scope — acknowledge it but note the content questions were already
+answered separately; don't silently overwrite it yourself.
+
 You also decide "front_confirmed" (true/false) — whether the customer is
 done with the front and ready to move on to the back of the card:
 - Set it to true if the customer expresses, in ANY wording, that they're
@@ -1280,13 +1290,176 @@ def handle_image_gate(user_message, current_spec):
         reply = "Great — go ahead and upload it whenever you're ready."
         return reply, spec_update
 
-    # intent == "no_image"
+    # intent == "no_image" — hand off to the closed-ended content checklist
+    # (business name / tagline / social-or-QR) instead of an open-ended
+    # style question. The checklist's own reply already explains the plan
+    # and asks its first question, so nothing more is needed here.
     spec_update["image_declined"] = True
-    spec_update["front_layout"] = "Text-only front — no image"
-    reply = ("No problem — we'll do a text-only front instead. Want your "
-              "business name set in bold lettering as the centerpiece, or "
-              "would you like to describe a style you have in mind?")
-    return reply, spec_update
+    checklist_reply, checklist_update = start_front_checklist()
+    spec_update.update(checklist_update)
+    return checklist_reply, spec_update
+
+
+# ---------------------------------------------------------------------------
+# FRONT CONTENT CHECKLIST — reached once the customer has chosen a
+# text-only front (image_declined == True). Same Python-owned, closed-ended
+# pattern as BACK_FIELDS: every question is yes/no first (never an open
+# "describe a style" prompt), and the next question is always computed here,
+# never guessed by the model. Once complete, control hands off to the
+# existing freeform FRONT_SYSTEM_PROMPT zone for style/size/color/placement
+# adjustments only — content is already settled by then.
+# ---------------------------------------------------------------------------
+
+FRONT_BUSINESS_NAME_QUESTION = "Do you want your business name on the front?"
+FRONT_BUSINESS_NAME_TEXT_QUESTION = "What's your business name?"
+FRONT_TAGLINE_QUESTION = "Do you want a tagline or slogan under your business name?"
+FRONT_TAGLINE_TEXT_QUESTION = "What should the tagline say?"
+FRONT_EXTRA_QUESTION = (
+    "Do you want social media handles or a QR code on the front too? "
+    "Most cards keep this on the back, but it's your choice."
+)
+FRONT_EXTRA_CHOICE_QUESTION = "Would you like social media handles, or a QR code?"
+FRONT_SOCIAL_TEXT_QUESTION = "What handle(s) would you like shown?"
+FRONT_CHECKLIST_DONE_REPLY = (
+    "Got it — here's how your front looks so far. Want to adjust the size, "
+    "colors, or placement of anything, or is it good as is?"
+)
+
+SOCIAL_CHOICE_WORDS = {"social", "social media", "handles", "handle", "social handles", "social handle"}
+QR_CHOICE_WORDS = {"qr", "qr code", "code", "a qr code", "qr-code"}
+
+
+def start_front_checklist():
+    """Called the moment image_declined becomes True (either from the
+    initial image gate, or later if the customer decides mid-adjustment to
+    drop an image and go text-only). Combines the plan explanation with the
+    very first checklist question so there's no separate, wasted turn."""
+    update = {
+        "front_stage": "business_name_gate",
+        "front_business_name_wanted": None,
+        "front_business_name": None,
+        "front_tagline_wanted": None,
+        "front_tagline": None,
+        "front_extra_wanted": None,
+        "front_extra_type": None,
+        "front_social": None,
+        "front_qr_image": None,
+        "front_layout": "Text-only front — collecting content",
+    }
+    reply = (
+        "No problem — we'll build a text-only front. I'll ask a few quick "
+        "closed questions (your business name, an optional tagline, and "
+        "whether you want social handles or a QR code up front), then at "
+        "the end you'll get a chance to fine-tune the size, colors, and "
+        "placement. First — " + FRONT_BUSINESS_NAME_QUESTION
+    )
+    return reply, update
+
+
+def handle_front_checklist(user_message, current_spec):
+    spec = dict(current_spec)
+    stage = spec.get("front_stage")
+    lower = user_message.lower().strip(" .!")
+
+    def is_yes(text):
+        return text in YES_WORDS or any(_starts_with_phrase(text, w) for w in YES_WORDS)
+
+    def is_no(text):
+        return text in SKIP_WORDS or any(_starts_with_phrase(text, w) for w in SKIP_WORDS)
+
+    if stage == "business_name_gate":
+        if is_no(lower):
+            spec["front_business_name_wanted"] = False
+            spec["front_stage"] = "tagline_gate"
+            return FRONT_TAGLINE_QUESTION, spec
+        if is_yes(lower):
+            spec["front_business_name_wanted"] = True
+            spec["front_stage"] = "business_name_text"
+            return FRONT_BUSINESS_NAME_TEXT_QUESTION, spec
+        return FRONT_BUSINESS_NAME_QUESTION, spec
+
+    if stage == "business_name_text":
+        spec["front_business_name"] = user_message.strip()
+        spec["front_stage"] = "tagline_gate"
+        return FRONT_TAGLINE_QUESTION, spec
+
+    if stage == "tagline_gate":
+        if is_no(lower):
+            spec["front_tagline_wanted"] = False
+            spec["front_stage"] = "extra_gate"
+            return FRONT_EXTRA_QUESTION, spec
+        if is_yes(lower):
+            spec["front_tagline_wanted"] = True
+            spec["front_stage"] = "tagline_text"
+            return FRONT_TAGLINE_TEXT_QUESTION, spec
+        return FRONT_TAGLINE_QUESTION, spec
+
+    if stage == "tagline_text":
+        spec["front_tagline"] = user_message.strip()
+        spec["front_stage"] = "extra_gate"
+        return FRONT_EXTRA_QUESTION, spec
+
+    if stage == "extra_gate":
+        if is_no(lower):
+            spec["front_extra_wanted"] = False
+            spec["front_stage"] = "done"
+            return FRONT_CHECKLIST_DONE_REPLY, spec
+        if is_yes(lower):
+            spec["front_extra_wanted"] = True
+            spec["front_stage"] = "extra_choice"
+            return FRONT_EXTRA_CHOICE_QUESTION, spec
+        return FRONT_EXTRA_QUESTION, spec
+
+    if stage == "extra_choice":
+        if any(w in lower for w in QR_CHOICE_WORDS):
+            spec["front_extra_type"] = "qr"
+            spec["front_stage"] = "qr_source"
+            return QR_SOURCE_QUESTION, spec
+        if any(w in lower for w in SOCIAL_CHOICE_WORDS):
+            spec["front_extra_type"] = "social"
+            spec["front_stage"] = "social_text"
+            return FRONT_SOCIAL_TEXT_QUESTION, spec
+        return FRONT_EXTRA_CHOICE_QUESTION, spec
+
+    if stage == "social_text":
+        spec["front_social"] = user_message.strip()
+        spec["front_stage"] = "done"
+        return FRONT_CHECKLIST_DONE_REPLY, spec
+
+    if stage == "qr_source":
+        if any(w in lower for w in UPLOAD_IMAGE_WORDS):
+            spec["front_stage"] = "qr_awaiting_upload"
+            return "Great — go ahead and upload your image whenever you're ready.", spec
+        if any(w in lower for w in GENERATE_QR_WORDS):
+            spec["front_stage"] = "qr_url"
+            return QR_URL_QUESTION, spec
+        return QR_SOURCE_QUESTION, spec
+
+    if stage == "qr_awaiting_upload":
+        if spec.get("front_qr_image"):
+            spec["front_stage"] = "done"
+            return FRONT_CHECKLIST_DONE_REPLY, spec
+        return "Whenever you're ready, use the upload button to add your image.", spec
+
+    if stage == "qr_url":
+        url = _clean_qr_url(user_message)
+        if not url:
+            return "I didn't catch a web address there — what URL should the QR code link to?", spec
+        spec["front_qr_image"] = (
+            "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data="
+            + urllib.parse.quote(url, safe="")
+        )
+        spec["front_stage"] = "done"
+        reply = f"Done — I generated a QR code linking to {url}.\n\n{FRONT_CHECKLIST_DONE_REPLY}"
+        return reply, spec
+
+    # Safety net — shouldn't normally be reached (e.g. stale/legacy state
+    # with no front_stage recorded). Restart the checklist from the top
+    # rather than falling through to the freeform zone with no content.
+    spec["front_stage"] = "business_name_gate"
+    return FRONT_BUSINESS_NAME_QUESTION, spec
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1523,6 +1696,46 @@ CHANGE_TRIGGER_WORDS = (
 )
 
 
+def _mentions_sides_concept(lower):
+    return "side" in lower or any(_starts_with_phrase(lower, w) for w in ONE_SIDE_WORDS | TWO_SIDE_WORDS)
+
+
+def _mentions_orientation_concept(lower):
+    return "orientation" in lower or any(w in lower for w in LANDSCAPE_WORDS | PORTRAIT_WORDS)
+
+
+def _mentions_image_concept(lower):
+    return "image" in lower or "logo" in lower or "photo" in lower or "picture" in lower
+
+
+def _mentions_back_template_concept(lower):
+    return "template" in lower or "layout" in lower or any(
+        kw in lower for t in BACK_TEMPLATES for kw in t["keywords"]
+    )
+
+
+def _validate_global_edit_intent(intent, user_message):
+    """Deterministic guardrail applied to the LLM's OWN classification (not
+    just its exception-fallback path below) — a change_* intent resets an
+    already-answered decision, which is too high-stakes to trust from
+    wording alone. Requires the message to literally mention the relevant
+    concept, the same requirement _global_edit_fallback already used. This
+    is what stops something like "an emoji smiley face" from being misread
+    as "the customer wants to add a real image" (which used to reopen the
+    already-answered image gate and derail the conversation) while still
+    allowing genuine requests like "actually I do have a logo" through."""
+    lower = user_message.lower().strip(" .!")
+    if intent == "change_sides":
+        return _mentions_sides_concept(lower)
+    if intent == "change_orientation":
+        return _mentions_orientation_concept(lower)
+    if intent == "change_image":
+        return _mentions_image_concept(lower)
+    if intent == "change_back_template":
+        return _mentions_back_template_concept(lower)
+    return True  # "none" always passes through unchanged
+
+
 def interpret_global_edit_request(user_message, current_spec):
     if not client:
         raise RuntimeError("GROQ_API_KEY is missing or empty")
@@ -1555,6 +1768,11 @@ def interpret_global_edit_request(user_message, current_spec):
         "change_back_template", "none",
     }:
         raise ValueError("Model returned an unrecognized intent")
+    if not _validate_global_edit_intent(result.get("intent"), user_message):
+        # The model claimed a change_* intent but the message doesn't
+        # literally mention the concept it claims to be changing — treat
+        # as a normal (non-edit) message instead of trusting the guess.
+        result = {"intent": "none", "reply_to_user": result.get("reply_to_user", "")}
     return result
 
 
@@ -1568,30 +1786,19 @@ def _global_edit_fallback(user_message, current_spec):
     if not any(w in lower for w in CHANGE_TRIGGER_WORDS):
         return {"intent": "none"}
 
-    if current_spec.get("card_sides") is not None and (
-        "side" in lower
-        or any(_starts_with_phrase(lower, w) for w in ONE_SIDE_WORDS | TWO_SIDE_WORDS)
-    ):
+    if current_spec.get("card_sides") is not None and _mentions_sides_concept(lower):
         return {"intent": "change_sides"}
 
     if (
         current_spec.get("front_orientation") is not None
         or current_spec.get("back_orientation") is not None
-    ) and (
-        "orientation" in lower
-        or any(w in lower for w in LANDSCAPE_WORDS | PORTRAIT_WORDS)
-    ):
+    ) and _mentions_orientation_concept(lower):
         return {"intent": "change_orientation"}
 
-    if current_spec.get("image_declined") is not None and (
-        "image" in lower or "logo" in lower or "photo" in lower or "picture" in lower
-    ):
+    if current_spec.get("image_declined") is not None and _mentions_image_concept(lower):
         return {"intent": "change_image"}
 
-    if current_spec.get("back_template") is not None and (
-        "template" in lower or "layout" in lower
-        or any(kw in lower for t in BACK_TEMPLATES for kw in t["keywords"])
-    ):
+    if current_spec.get("back_template") is not None and _mentions_back_template_concept(lower):
         return {"intent": "change_back_template"}
 
     return {"intent": "none"}
@@ -1623,6 +1830,8 @@ def route_conversation(user_message, current_spec, front_locked, image_uploaded)
         return route_back_flow(user_message, current_spec)
     if image_declined is None:
         return handle_image_gate(user_message, current_spec)
+    if image_declined and current_spec.get("front_stage") != "done":
+        return handle_front_checklist(user_message, current_spec)
     return handle_front_side(user_message, current_spec, image_uploaded)
 
 
@@ -1733,6 +1942,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # and then stripped before the response is built.
             front_confirmed = bool(spec_update.pop("front_confirmed", False))
 
+            # If handle_front_side (the freeform adjustment zone, only
+            # reachable once image_declined is False or the text-only
+            # checklist is already "done") just flipped image_declined from
+            # False to True — i.e. the customer decided mid-adjustment to
+            # drop the image and go text-only after all — kick off the same
+            # Python-owned content checklist used when text-only is chosen
+            # from the very start, instead of leaving them with no business
+            # name/tagline/social content collected at all.
+            if (
+                image_declined is False
+                and spec_update.get("image_declined") is True
+                and not spec_update.get("front_stage")
+            ):
+                checklist_reply, checklist_update = start_front_checklist()
+                spec_update.update(checklist_update)
+                reply = checklist_reply
+
             # Tell the frontend whether to show the visual orientation
             # picker, back-template picker, or capacity-check suggestions
             # for whatever question is about to be asked. spec_update from
@@ -1771,11 +1997,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ):
                     awaiting_gate = "orientation_back"
                 else:
+                    if merged_spec.get("front_stage") == "qr_awaiting_upload":
+                        awaiting_gate = "front_qr_image_upload"
                     back_stage_reached = (
                         merged_spec.get("card_sides") == "one"
                         or (merged_spec.get("card_sides") == "two" and routing_front_locked)
                     )
-                    if back_stage_reached:
+                    if back_stage_reached and awaiting_gate is None:
                         if merged_spec.get("back_template") is None:
                             awaiting_gate = "back_template"
                         elif merged_spec.get("capacity_check_pending"):

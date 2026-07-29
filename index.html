@@ -254,6 +254,15 @@ const state = {
         pending_field: null,
         pending_stage: null,
         pending_value: null,
+        front_stage: null,
+        front_business_name_wanted: null,
+        front_business_name: null,
+        front_tagline_wanted: null,
+        front_tagline: null,
+        front_extra_wanted: null,
+        front_extra_type: null,
+        front_social: null,
+        front_qr_image: null,
         // null = not asked yet, "" / false = explicitly skipped, otherwise filled
         contact: {
             name: null, title: null, company: null, phone: null, email: null,
@@ -281,7 +290,10 @@ const state = {
 const FRONT_RELEVANT_FIELDS = [
     'front_layout', 'style_vibe', 'image_fit', 'image_scale',
     'image_position_x', 'image_position_y', 'background_mode',
-    'background_color', 'has_lace_accents'
+    'background_color', 'has_lace_accents',
+    'front_business_name_wanted', 'front_business_name',
+    'front_tagline_wanted', 'front_tagline',
+    'front_extra_wanted', 'front_extra_type', 'front_social', 'front_qr_image'
 ];
 
 function snapshotFrontFields(spec) {
@@ -889,6 +901,37 @@ function renderBackCardHTML(ds) {
         </div>`;
 }
 
+function renderFrontCardHTML(ds) {
+    const hasContent = ds.front_business_name || ds.front_tagline || ds.front_social || ds.front_qr_image;
+    if (!hasContent) {
+        return `
+            <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
+                <div>
+                    <h2 style="font-size:1.2rem;font-weight:700;">Front</h2>
+                    <p style="font-size:0.8rem;color:#475569;margin-top:8px;">${esc(ds.front_layout || 'Building your text-only front...')}</p>
+                </div>
+                <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;">3.5″ × 2.0″</div>
+            </div>`;
+    }
+
+    let extraHTML = '';
+    if (ds.front_extra_type === 'social' && ds.front_social) {
+        extraHTML = `<p style="font-size:0.78rem;color:#334155;margin-top:12px;">${esc(ds.front_social)}</p>`;
+    } else if (ds.front_extra_type === 'qr' && ds.front_qr_image) {
+        extraHTML = `<div style="margin-top:12px;"><img src="${ds.front_qr_image}" style="width:60px;height:60px;object-fit:contain;" alt="QR code"></div>`;
+    }
+
+    return `
+        <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
+            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+                ${ds.front_business_name ? `<h2 style="font-size:1.4rem;font-weight:700;margin:0;">${esc(ds.front_business_name)}</h2>` : ''}
+                ${ds.front_tagline ? `<p style="font-size:0.85rem;color:#475569;margin:6px 0 0;">${esc(ds.front_tagline)}</p>` : ''}
+                ${extraHTML}
+            </div>
+            <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;">3.5″ × 2.0″</div>
+        </div>`;
+}
+
 function render() {
     updateSidesUI();
     const card = document.getElementById('cardPreview');
@@ -917,7 +960,7 @@ function render() {
     card.style.background = '#ffffff';
 
     if (state.activeSide === 'front') {
-        card.innerHTML = `
+        card.innerHTML = ds.image_declined ? renderFrontCardHTML(ds) : `
             <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
                 <div>
                     <h2 style="font-size:1.2rem;font-weight:700;">Front</h2>
@@ -1058,6 +1101,37 @@ function appendBackImageUploadPrompt() {
         reader.onload = ev => {
             state.design_spec.contact.back_image = ev.target.result;
             state.design_spec.contact.back_image_kind = 'upload';
+            wrap.remove();
+            render();
+            appendMessage('agent', 'Image received!');
+            callAgent("I've uploaded the image.");
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+// Same idea as appendBackImageUploadPrompt, but for the front-side QR
+// sub-flow (customer already has their own QR image to upload rather
+// than having one generated from a URL).
+function appendFrontImageUploadPrompt() {
+    const box = document.getElementById('chatMessages');
+    const wrap = document.createElement('div');
+    wrap.className = 'template-picker';
+    const inputId = 'frontQrUpload_' + Date.now();
+    wrap.innerHTML = `
+        <label class="template-btn" for="${inputId}">
+            <span class="template-icon">📎</span>Upload Image
+        </label>
+        <input type="file" id="${inputId}" accept="image/*"
+               style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">`;
+    box.appendChild(wrap);
+    box.scrollTop = box.scrollHeight;
+    document.getElementById(inputId).addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            state.design_spec.front_qr_image = ev.target.result;
             wrap.remove();
             render();
             appendMessage('agent', 'Image received!');
@@ -1243,6 +1317,8 @@ async function callAgent(text) {
             appendCapacitySuggestions(state.design_spec.capacity_suggestions);
         } else if (data.awaiting_gate === 'qr_image_upload') {
             appendBackImageUploadPrompt();
+        } else if (data.awaiting_gate === 'front_qr_image_upload') {
+            appendFrontImageUploadPrompt();
         }
 
         render();

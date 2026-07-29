@@ -79,6 +79,23 @@ adjustment as something the customer still needs to do.
 Never mention or modify contact information or anything about the back of
 the card. That is handled separately by a different system.
 
+You also decide "front_confirmed" (true/false) — whether the customer is
+done with the front and ready to move on to the back of the card:
+- Set it to true if the customer expresses, in ANY wording, that they're
+  happy with the front and ready to proceed — not just an exact phrase.
+  Examples that all count: "i like it", "you got it", "yeppers", "this
+  works", "ship it", "let's move on", "good enough", "perfect, next",
+  "that'll do". Use your judgment for tone/intent, not a fixed word list.
+- Keep it false if the message ALSO contains a change/adjustment request
+  (e.g. "looks good, just move it left a bit", "i like it but make it
+  smaller") — make the requested change as usual in that case, don't treat
+  it as final yet.
+- Keep it false for anything that isn't clearly an
+  approval-and-ready-to-proceed signal — small talk, questions, or a
+  vague/ambiguous reply should leave this false and just get a normal
+  reply_to_user.
+- Default to false when in doubt.
+
 Always return ONLY this exact JSON shape, nothing before or after it:
 {
   "reply_to_user": "a short, confident reply to the customer",
@@ -92,7 +109,8 @@ Always return ONLY this exact JSON shape, nothing before or after it:
     "background_mode": "extend",
     "background_color": "#ffffff",
     "has_lace_accents": false,
-    "image_declined": false
+    "image_declined": false,
+    "front_confirmed": false
   }
 }
 """
@@ -1650,6 +1668,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 reply, spec_update = route_conversation(user_message, current_spec, front_locked, image_uploaded)
                 routing_front_locked = front_locked
 
+            # front_confirmed is a one-turn signal from the front-side LLM
+            # (handle_front_side) meaning "the customer is happy with the
+            # front and ready to move on" — recognized in any wording, not
+            # just the fixed handful of phrases the client checks locally
+            # before ever calling the server. front_confirmed itself is
+            # transient (not a persisted design field), so it's read here
+            # and then stripped before the response is built.
+            front_confirmed = bool(spec_update.pop("front_confirmed", False))
+
             # Tell the frontend whether to show the visual orientation
             # picker, back-template picker, or capacity-check suggestions
             # for whatever question is about to be asked. spec_update from
@@ -1659,6 +1686,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # complete picture since the client sends its full design_spec
             # on every request.
             merged_spec = {**current_spec, **spec_update}
+
+            # When front_confirmed just came in, lock the front here via the
+            # existing front_locked_override mechanism and hand off to the
+            # back exactly like the client's own local keyword shortcut
+            # already does for the phrases it recognizes — this is the
+            # server-side safety net that catches every other phrasing.
+            if front_confirmed and not routing_front_locked and merged_spec.get("card_sides") == "two":
+                routing_front_locked = True
+                front_locked_override = True
+                if merged_spec.get("back_orientation") is None:
+                    next_question = ORIENTATION_GATE_QUESTION_BACK
+                elif merged_spec.get("back_template") is None:
+                    next_question = BACK_TEMPLATE_QUESTION
+                else:
+                    next_field = next_unanswered_field(merged_spec.get("contact", {}) or {})
+                    next_question = next_field["question"] if next_field else BACK_TEMPLATE_QUESTION
+                reply = "Front is locked. Now we build the back.\n\n" + next_question
+
             awaiting_gate = None
             if merged_spec.get("card_sides") is not None:
                 if merged_spec.get("front_orientation") is None:

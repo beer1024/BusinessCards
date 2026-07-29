@@ -1208,10 +1208,17 @@ async function callAgent(text) {
         // client-side front_locked flag on its own — it tells us to via
         // this field so our UI stays in sync.
         if (Object.prototype.hasOwnProperty.call(data, 'front_locked_override')) {
+            const wasLocked = state.front_locked;
             state.front_locked = data.front_locked_override;
             updateEditFrontButtonVisibility();
             if (!state.front_locked) {
                 switchSide('front');
+            } else if (!wasLocked) {
+                // Newly locked from the server side (e.g. the front-side
+                // LLM recognized an unusual "I'm happy with this" phrasing
+                // the client's local shortcut didn't catch) — switch the
+                // view to the back, same as the client's own local lock.
+                switchSide('back');
             }
         }
 
@@ -1263,6 +1270,12 @@ document.getElementById('imageUpload').addEventListener('change', e => {
     reader.onload = ev => {
         state.originalImageUrl = ev.target.result;
         state.image_uploaded = true;
+        // The customer can click this Upload Image control directly,
+        // bypassing the "do you have an image?" chat gate entirely. Without
+        // this, image_declined stays null and every later chat message gets
+        // mis-routed back into that gate question instead of the normal
+        // front-side flow (and front_locked can never become true).
+        state.design_spec.image_declined = false;
         state.design_spec.front_layout = 'Image uploaded – ready for adjustments';
         state.design_spec.image_fit = 'contain';
         state.design_spec.background_mode = 'extend';

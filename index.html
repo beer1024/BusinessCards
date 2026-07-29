@@ -61,6 +61,11 @@ body { background: var(--bg); color: var(--text); display: flex; height: 100vh; 
 .template-btn { background: #0f172a; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer; font-size: 0.74rem; font-weight: 600; text-align: left; display: flex; align-items: center; gap: 6px; }
 .template-btn:hover { border-color: var(--accent); color: var(--accent); }
 .template-icon { font-size: 1rem; }
+@keyframes fieldPulse {
+    0% { background-color: rgba(250, 204, 21, 0.55); }
+    100% { background-color: transparent; }
+}
+.field-pulse { animation: fieldPulse 1.6s ease-out; border-radius: 3px; }
 .spec-readout { position: absolute; bottom: 24px; width: min(420px, 90%); background: rgba(30,41,59,.88); border: 1px solid var(--border); padding: 12px 16px; border-radius: 10px; font-size: 0.78rem; color: var(--muted); }
 .spec-readout strong { color: var(--text); }
 .download-btn { position: absolute; bottom: 24px; right: 24px; padding: 10px 18px; font-size: 0.85rem; }
@@ -724,7 +729,7 @@ function contactLines(c, opts) {
     const push = (key, val, extraStyle) => {
         if (!val) return;
         const icon = icons[key] ? `${icons[key]} ` : '';
-        lines.push(`<div style="${extraStyle || ''}">${icon}${esc(val)}</div>`);
+        lines.push(`<div data-field="${key}" style="${extraStyle || ''}">${icon}${esc(val)}</div>`);
     };
     push('phone', c.phone);
     push('email', c.email);
@@ -747,16 +752,16 @@ function renderTemplateBody(templateId, c, compact) {
 
     const header = () => {
         let h = '';
-        if (c.name) h += `<div style="font-weight:700;font-size:${nameSz};color:#0f172a;margin-bottom:2px;">${esc(c.name)}</div>`;
-        if (c.title) h += `<div style="color:#64748b;font-size:${bodySz};margin-bottom:2px;">${esc(c.title)}</div>`;
-        if (c.company) h += `<div style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
+        if (c.name) h += `<div data-field="name" style="font-weight:700;font-size:${nameSz};color:#0f172a;margin-bottom:2px;">${esc(c.name)}</div>`;
+        if (c.title) h += `<div data-field="title" style="color:#64748b;font-size:${bodySz};margin-bottom:2px;">${esc(c.title)}</div>`;
+        if (c.company) h += `<div data-field="company" style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
         return h;
     };
     const extras = () => {
         let e = '';
-        if (c.tagline) e += `<div style="margin-top:${gapTop};font-size:${bodySz};font-style:italic;color:#475569;">“${esc(c.tagline)}”</div>`;
-        if (c.services) e += `<div style="margin-top:6px;font-size:${bodySz};color:#64748b;">${esc(c.services)}</div>`;
-        if (c.cta) e += `<div style="margin-top:${gapTop};font-size:${bodySz};font-weight:600;color:#0f172a;">${esc(c.cta)}</div>`;
+        if (c.tagline) e += `<div data-field="tagline" style="margin-top:${gapTop};font-size:${bodySz};font-style:italic;color:#475569;">“${esc(c.tagline)}”</div>`;
+        if (c.services) e += `<div data-field="services" style="margin-top:6px;font-size:${bodySz};color:#64748b;">${esc(c.services)}</div>`;
+        if (c.cta) e += `<div data-field="cta" style="margin-top:${gapTop};font-size:${bodySz};font-weight:600;color:#0f172a;">${esc(c.cta)}</div>`;
         return e;
     };
     const anyContent = c.name || c.title || c.company || c.phone || c.email || c.website ||
@@ -918,7 +923,29 @@ function render() {
 
     // BACK SIDE
     card.innerHTML = renderBackCardHTML(ds);
+    highlightChangedBackFields(ds.contact || {});
 }
+
+// Compares the just-rendered contact fields against the previous snapshot
+// and briefly pulses (CSS flash) whatever field lines are new or changed,
+// so the customer can see exactly where each answer landed in the preview.
+function highlightChangedBackFields(contact) {
+    const prev = state._prevBackContact || {};
+    for (const key of BACK_FIELD_KEYS) {
+        const val = contact[key];
+        if (val && val !== prev[key]) {
+            const el = document.querySelector(`#cardPreview [data-field="${key}"]`);
+            if (el) {
+                el.classList.remove('field-pulse');
+                // force reflow so the animation restarts if it's already present
+                void el.offsetWidth;
+                el.classList.add('field-pulse');
+            }
+        }
+    }
+    state._prevBackContact = { ...contact };
+}
+
 
 function appendMessage(role, text) {
     const box = document.getElementById('chatMessages');

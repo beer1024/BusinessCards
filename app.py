@@ -1347,11 +1347,8 @@ def start_front_checklist():
         "front_layout": "Text-only front — collecting content",
     }
     reply = (
-        "No problem — we'll build a text-only front. I'll ask a few quick "
-        "closed questions (your business name, an optional tagline, and "
-        "whether you want social handles or a QR code up front), then at "
-        "the end you'll get a chance to fine-tune the size, colors, and "
-        "placement. First — " + FRONT_BUSINESS_NAME_QUESTION
+        "Got it, text-only front. A few quick questions, then we'll "
+        "fine-tune the look. " + FRONT_BUSINESS_NAME_QUESTION
     )
     return reply, update
 

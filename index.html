@@ -773,12 +773,12 @@ function renderTemplateBody(templateId, c, compact) {
         let h = '';
         if (c.name) h += `<div data-field="name" style="font-weight:700;font-size:${nameSz};color:#0f172a;margin-bottom:2px;">${esc(c.name)}</div>`;
         if (c.title) h += `<div data-field="title" style="color:#64748b;font-size:${bodySz};margin-bottom:2px;">${esc(c.title)}</div>`;
-        if (c.company) h += `<div data-field="company" style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
+        if (c.company) h += `<div data-field="company" style="color:#000;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
         return h;
     };
     const extras = () => {
         let e = '';
-        if (c.tagline) e += `<div data-field="tagline" style="margin-top:${gapTop};font-size:${bodySz};font-style:italic;color:#475569;">“${esc(c.tagline)}”</div>`;
+        if (c.tagline) e += `<div data-field="tagline" style="margin-top:${gapTop};font-size:${bodySz};font-style:italic;color:#000;">“${esc(c.tagline)}”</div>`;
         if (c.services) e += `<div data-field="services" style="margin-top:6px;font-size:${bodySz};color:#64748b;">${esc(c.services)}</div>`;
         if (c.cta) e += `<div data-field="cta" style="margin-top:${gapTop};font-size:${bodySz};font-weight:600;color:#0f172a;">${esc(c.cta)}</div>`;
         return e;
@@ -792,7 +792,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c);
             return `<div style="text-align:center;">
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:10px;display:flex;justify-content:center;">${backImageHTML(c, 60)}</div>` : ''}
             </div>`;
@@ -801,7 +801,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c, { icons: { phone: '📞', email: '✉️', website: '🌐', address: '📍', social: '👤' } });
             return `<div>
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.7;color:#334155;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.7;color:#000;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:10px;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -811,7 +811,7 @@ function renderTemplateBody(templateId, c, compact) {
             return `<div style="display:flex;gap:12px;height:100%;">
                 <div style="flex:1;border-right:1px solid #e2e8f0;padding-right:12px;">
                     ${header()}
-                    ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                    ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
                     ${extras()}
                 </div>
                 <div style="width:70px;display:flex;align-items:center;justify-content:center;">
@@ -826,8 +826,8 @@ function renderTemplateBody(templateId, c, compact) {
                     ${c.name ? `<div style="font-weight:700;font-size:${nameSz};">${esc(c.name)}</div>` : ''}
                     ${c.title ? `<div style="font-size:${bodySz};opacity:.85;">${esc(c.title)}</div>` : ''}
                 </div>
-                ${c.company ? `<div style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>` : ''}
-                ${lines ? `<div style="font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                ${c.company ? `<div style="color:#000;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>` : ''}
+                ${lines ? `<div style="font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:8px;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -836,7 +836,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c);
             return `<div style="border:2px solid #cbd5e1;border-radius:8px;padding:10px;height:calc(100% - 20px);text-align:center;">
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:8px;display:flex;justify-content:center;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -846,7 +846,7 @@ function renderTemplateBody(templateId, c, compact) {
             return `<div style="height:100%;display:flex;flex-direction:column;justify-content:flex-end;">
                 ${c.back_image ? `<div style="margin-bottom:8px;">${backImageHTML(c, 50)}</div>` : ''}
                 ${header()}
-                ${lines ? `<div style="font-size:${bodySz};line-height:1.5;color:#334155;">${lines}</div>` : ''}
+                ${lines ? `<div style="font-size:${bodySz};line-height:1.5;color:#000;">${lines}</div>` : ''}
                 ${extras()}
             </div>`;
         }
@@ -856,7 +856,7 @@ function renderTemplateBody(templateId, c, compact) {
                 ${c.back_image ? backImageHTML(c, 90) : '<div style="width:70px;height:70px;border:2px dashed #cbd5e1;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:0.68rem;color:#94a3b8;">QR</div>'}
                 <div style="margin-top:8px;">
                     ${c.name ? `<div style="font-weight:700;font-size:${bodySz};color:#0f172a;">${esc(c.name)}</div>` : ''}
-                    ${lines ? `<div style="font-size:${bodySz};color:#334155;">${lines}</div>` : ''}
+                    ${lines ? `<div style="font-size:${bodySz};color:#000;">${lines}</div>` : ''}
                 </div>
             </div>`;
         }
@@ -865,7 +865,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c);
             return `<div>
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.5;color:#334155;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.5;color:#000;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:10px;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -916,7 +916,7 @@ function renderFrontCardHTML(ds) {
 
     let extraHTML = '';
     if (ds.front_extra_type === 'social' && ds.front_social) {
-        extraHTML = `<p style="font-size:0.78rem;color:#334155;margin-top:12px;">${esc(ds.front_social)}</p>`;
+        extraHTML = `<p style="font-size:0.78rem;color:#000;margin-top:12px;">${esc(ds.front_social)}</p>`;
     } else if (ds.front_extra_type === 'qr' && ds.front_qr_image) {
         extraHTML = `<div style="margin-top:12px;"><img src="${ds.front_qr_image}" style="width:60px;height:60px;object-fit:contain;" alt="QR code"></div>`;
     }
@@ -924,8 +924,8 @@ function renderFrontCardHTML(ds) {
     return `
         <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
             <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
-                ${ds.front_business_name ? `<h2 style="font-size:1.4rem;font-weight:700;margin:0;">${esc(ds.front_business_name)}</h2>` : ''}
-                ${ds.front_tagline ? `<p style="font-size:0.85rem;color:#475569;margin:6px 0 0;">${esc(ds.front_tagline)}</p>` : ''}
+                ${ds.front_business_name ? `<h2 style="font-size:1.4rem;font-weight:700;margin:0;color:#000;">${esc(ds.front_business_name)}</h2>` : ''}
+                ${ds.front_tagline ? `<p style="font-size:0.85rem;color:#000;margin:6px 0 0;">${esc(ds.front_tagline)}</p>` : ''}
                 ${extraHTML}
             </div>
             <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;">3.5″ × 2.0″</div>

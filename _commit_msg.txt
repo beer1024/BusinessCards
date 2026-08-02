@@ -1,0 +1,26 @@
+﻿Phase 15: clickable drag-and-click style editor for front and back
+
+- design_spec gains front_field_styles/back_field_styles (per-field x/y,
+  fontSize, color, bold, italic, fontFamily; image/QR fields use size
+  instead of font props). Defaults are seeded lazily so nothing shifts
+  until the customer actually opens the editor.
+- Once a side's content is confirmed (front_stage === 'done' for the
+  front, back_complete for the back), the preview switches to absolute-
+  positioned editable fields: pointer-based drag (mouse + touch, 4px
+  click-vs-drag threshold) repositions anywhere on the card; a plain
+  click opens a floating toolbar (font size, color, bold/italic, a
+  curated font-family picker for text, a size slider for image/QR) that
+  updates the style live.
+- Static (pre-editor) rendering is untouched, so nothing changes until a
+  side's content is actually confirmed.
+- Export consistency: buildBackCardImage now honors back_field_styles
+  (position/font/color) and draws the real uploaded/QR back image instead
+  of a placeholder rectangle. Added buildFrontTextCardImage, a canvas
+  export for text-only fronts that previously had no export path at all
+  (downloadCard silently failed with an "upload an image first" alert) -
+  now honors front_field_styles the same way.
+- Verified live in a browser: dragging updates position/state, clicking
+  opens the toolbar with correct current values, toolbar controls (font
+  size, color, bold) apply immediately, both new/updated canvas export
+  functions produce valid PNGs. JS syntax re-checked with esprima;
+  py_compile unaffected (frontend-only change).

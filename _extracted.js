@@ -1,133 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Business Card Design Studio</title>
-<style>
-:root {
-    --bg: #0f172a;
-    --panel: #1e293b;
-    --text: #f8fafc;
-    --muted: #94a3b8;
-    --accent: #38bdf8;
-    --border: #334155;
-}
-* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-body { background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
-.chat-container { width: 42%; min-width: 340px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-.chat-header { padding: 18px 20px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
-.chat-header span { font-size: 0.75rem; color: var(--accent); background: rgba(56,189,248,.12); padding: 4px 10px; border-radius: 999px; }
-.header-controls { display: flex; align-items: center; gap: 8px; }
-.edit-front-btn { display: none; background: none; border: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
-.edit-front-btn.visible { display: inline-block; }
-.edit-front-btn:hover { border-color: var(--accent); color: var(--accent); }
-.progress-row { padding: 10px 20px; border-bottom: 1px solid var(--border); font-size: 0.78rem; color: var(--muted); display: none; }
-.progress-row.visible { display: block; }
-.progress-bar-track { margin-top: 6px; height: 5px; background: #0f172a; border-radius: 999px; overflow: hidden; }
-.progress-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
-.chat-messages { flex: 1; padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-.message { max-width: 88%; padding: 12px 16px; border-radius: 12px; line-height: 1.45; font-size: 0.92rem; white-space: pre-line; }
-.message.agent { background: #334155; align-self: flex-start; border-left: 3px solid var(--accent); }
-.message.user { background: var(--accent); color: #0f172a; align-self: flex-end; font-weight: 500; }
-.chat-input-area { padding: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
-.upload-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.82rem; color: var(--muted); background: #0f172a; padding: 10px 12px; border-radius: 8px; border: 1px dashed var(--border); }
-.upload-row label { cursor: pointer; }
-.upload-row label:hover strong { color: var(--accent); }
-.upload-row input[type=file] {
-    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
-}
-.input-row { display: flex; gap: 8px; }
-.input-row input[type=text] { flex: 1; padding: 11px 14px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 0.92rem; }
-.input-row input[type=text]:focus { outline: none; border-color: var(--accent); }
-.input-row button, .download-btn { padding: 0 18px; background: var(--accent); color: #0f172a; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
-.input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
-.preview-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px 20px; position: relative; }
-.preview-header { position: absolute; top: 24px; display: flex; gap: 8px; }
-.side-toggle-btn { background: #334155; color: var(--text); border: 1px solid var(--border); padding: 7px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem; }
-.side-toggle-btn.active { background: var(--accent); color: #0f172a; border-color: var(--accent); }
-.card-label { position: absolute; top: 72px; font-size: 0.75rem; color: var(--muted); letter-spacing: 1.4px; text-transform: uppercase; font-weight: 700; }
-.business-card { width: 480px; height: 274px; border-radius: 12px; box-shadow: 0 25px 50px -12px rgb(0 0 0 / .65); position: relative; overflow: hidden; background: #fff; }
-.business-card.portrait { width: 274px; height: 480px; }
-.editable-field { outline: 1px dashed transparent; border-radius: 3px; padding: 2px 4px; }
-.editable-field:hover { outline-color: #38bdf8; background: rgba(56,189,248,.08); }
-.editable-field.image-field:hover { outline-color: #38bdf8; }
-#fieldToolbar label { display: flex; flex-direction: column; gap: 3px; font-size: 0.72rem; color: #94a3b8; }
-#fieldToolbar select, #fieldToolbar input[type=range] { width: 100%; }
-#fieldToolbar button { background: #334155; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 0.78rem; }
-#fieldToolbar button:hover { border-color: #38bdf8; color: #38bdf8; }
-.orientation-picker { display: flex; gap: 14px; align-self: flex-start; margin-top: -4px; }
-.orientation-btn { background: #0f172a; border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 14px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 0.78rem; font-weight: 600; }
-.orientation-btn:hover { border-color: var(--accent); color: var(--accent); }
-.orientation-rect { display: block; background: #334155; border: 2px solid var(--muted); border-radius: 3px; }
-.orientation-btn:hover .orientation-rect { border-color: var(--accent); }
-.orientation-rect.landscape { width: 46px; height: 30px; }
-.orientation-rect.portrait { width: 30px; height: 46px; }
-.template-picker { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-self: flex-start; margin-top: -4px; max-width: 92%; }
-.template-btn { background: #0f172a; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer; font-size: 0.74rem; font-weight: 600; text-align: left; display: flex; align-items: center; gap: 6px; }
-.template-btn:hover { border-color: var(--accent); color: var(--accent); }
-.template-icon { font-size: 1rem; }
-@keyframes fieldPulse {
-    0% { background-color: rgba(250, 204, 21, 0.55); }
-    100% { background-color: transparent; }
-}
-.field-pulse { animation: fieldPulse 1.6s ease-out; border-radius: 3px; }
-.spec-readout { position: absolute; bottom: 24px; width: min(420px, 90%); background: rgba(30,41,59,.88); border: 1px solid var(--border); padding: 12px 16px; border-radius: 10px; font-size: 0.78rem; color: var(--muted); }
-.spec-readout strong { color: var(--text); }
-.download-btn { position: absolute; bottom: 24px; right: 24px; padding: 10px 18px; font-size: 0.85rem; }
-@media (max-width: 900px) {
-    body { flex-direction: column; height: auto; min-height: 100vh; }
-    .chat-container { width: 100%; height: 45vh; }
-    .business-card { width: 340px; height: 194px; }
-    .business-card.portrait { width: 194px; height: 340px; }
-}
-</style>
-</head>
-<body>
 
-<div class="chat-container">
-    <div class="chat-header">
-        Creative Direction Studio
-        <div class="header-controls">
-            <button class="edit-front-btn" id="editFrontBtn" onclick="goBackToFront()">← Edit Front</button>
-            <span>Agent Active</span>
-        </div>
-    </div>
-    <div class="progress-row" id="progressRow">
-        <span id="progressText">0 of 12 details</span>
-        <div class="progress-bar-track"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
-    </div>
-    <div class="chat-messages" id="chatMessages">
-        <div class="message agent">Hello! Would you like a one-sided or two-sided business card?</div>
-    </div>
-    <div class="chat-input-area">
-        <div class="upload-row">
-            <label for="imageUpload"><strong>Upload Image:</strong></label>
-            <input type="file" id="imageUpload" accept="image/*">
-        </div>
-        <div class="input-row">
-            <input type="text" id="userInput" placeholder="Tell me what to change…" autofocus>
-            <button id="sendBtn">Send</button>
-        </div>
-    </div>
-</div>
-
-<div class="preview-container">
-    <div class="preview-header">
-        <button class="side-toggle-btn active" id="btnFront" onclick="switchSide('front')">Front</button>
-        <button class="side-toggle-btn" id="btnBack" onclick="switchSide('back')">Back</button>
-    </div>
-    <div class="card-label" id="cardSideLabel">Viewing: Front Side</div>
-    <div class="business-card" id="cardPreview"></div>
-    <div class="spec-readout">
-        <div><strong>Vibe:</strong> <span id="vibeText">—</span></div>
-        <div><strong>Layout:</strong> <span id="layoutText">Waiting for image…</span></div>
-    </div>
-    <button class="download-btn" onclick="downloadCard()">Download PNG</button>
-</div>
-
-<script>
 // Keep this list in sync with BACK_FIELDS in server.py
 const BACK_FIELD_KEYS = [
     'name', 'title', 'company', 'phone', 'email', 'website',
@@ -261,22 +132,6 @@ const state = {
         pending_field: null,
         pending_stage: null,
         pending_value: null,
-        front_stage: null,
-        front_business_name_wanted: null,
-        front_business_name: null,
-        front_tagline_wanted: null,
-        front_tagline: null,
-        front_extra_wanted: null,
-        front_extra_type: null,
-        front_social: null,
-        front_qr_image: null,
-        // Per-field style/position overrides for the clickable style editor
-        // (Phase 15). Keyed by 'business_name' | 'tagline' | 'extra' for the
-        // front, and by each BACK_FIELD key (+ 'image') for the back. Each
-        // entry is null/unset until the customer actually opens the editor
-        // for that field, at which point a sensible default is seeded.
-        front_field_styles: {},
-        back_field_styles: {},
         // null = not asked yet, "" / false = explicitly skipped, otherwise filled
         contact: {
             name: null, title: null, company: null, phone: null, email: null,
@@ -304,10 +159,7 @@ const state = {
 const FRONT_RELEVANT_FIELDS = [
     'front_layout', 'style_vibe', 'image_fit', 'image_scale',
     'image_position_x', 'image_position_y', 'background_mode',
-    'background_color', 'has_lace_accents',
-    'front_business_name_wanted', 'front_business_name',
-    'front_tagline_wanted', 'front_tagline',
-    'front_extra_wanted', 'front_extra_type', 'front_social', 'front_qr_image'
+    'background_color', 'has_lace_accents'
 ];
 
 function snapshotFrontFields(spec) {
@@ -671,66 +523,7 @@ function buildBackCardImage(cb) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, W, H);
 
-    const ds = state.design_spec;
-    const c = ds.contact || {};
-    const styles = ds.back_field_styles || {};
-    const scaleFactor = W / 480; // preview canvas is 480px wide at 1x
-
-    // If the customer has used the drag-and-drop style editor, honor those
-    // exact positions/fonts/colors so the exported file matches the
-    // preview exactly. Otherwise fall back to today's simple stacked list.
-    const orderedKeys = ['name', 'title', 'company', 'phone', 'email', 'website', 'address', 'social', 'tagline', 'services', 'cta'];
-    const hasCustomStyles = orderedKeys.some(k => styles[k]) || (c.back_image && styles.image);
-
-    const drawStyledField = (key, text, style) => {
-        const x = (style.x / 100) * W;
-        const y = (style.y / 100) * H;
-        ctx.fillStyle = style.color || '#000000';
-        const weight = style.bold ? '700' : '400';
-        const styleWord = style.italic ? 'italic' : 'normal';
-        const fontPx = Math.round((style.fontSize || 16) * scaleFactor);
-        ctx.font = `${styleWord} ${weight} ${fontPx}px ${fontCssStack(style.fontFamily)}`;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText(text, x, y);
-    };
-
-    const finishWithImage = () => {
-        if (c.back_image) {
-            const style = styles.image || { x: 82, y: 82, size: 60 };
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            const draw = () => {
-                try {
-                    const sizePx = (style.size || 60) * scaleFactor;
-                    const x = (style.x / 100) * W - sizePx / 2;
-                    const y = (style.y / 100) * H - sizePx / 2;
-                    ctx.drawImage(img, x, y, sizePx, sizePx);
-                } catch (e) { /* keep exporting even if the image can't be drawn */ }
-                cb(canvas.toDataURL('image/png'));
-            };
-            img.onload = draw;
-            img.onerror = () => cb(canvas.toDataURL('image/png'));
-            img.src = c.back_image;
-            return;
-        }
-        cb(canvas.toDataURL('image/png'));
-    };
-
-    if (hasCustomStyles) {
-        orderedKeys.forEach(key => {
-            const val = c[key];
-            if (!val) return;
-            const style = styles[key] || defaultFieldStyle('text', { x: 22, y: 15 });
-            drawStyledField(key, key === 'tagline' ? ('"' + val + '"') : val, style);
-        });
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '400 14px sans-serif';
-        ctx.fillText('3.5" x 2.0"', W - 130, H - 30);
-        finishWithImage();
-        return;
-    }
-
+    const c = state.design_spec.contact || {};
     const left = 60;
     let y = 90;
 
@@ -780,7 +573,7 @@ function buildBackCardImage(cb) {
         ctx.fillText(c.cta, left, y);
         y += 24;
     }
-    if (c.qr_code && !c.back_image) {
+    if (c.qr_code) {
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 2;
         ctx.strokeRect(W - 180, H - 180, 120, 120);
@@ -793,80 +586,8 @@ function buildBackCardImage(cb) {
     ctx.font = '400 14px sans-serif';
     ctx.fillText('3.5" x 2.0"', W - 130, H - 30);
 
-    finishWithImage();
-}
-
-// Canvas export for a text-only front (no uploaded photo) — mirrors
-// buildBackCardImage. Honors front_field_styles overrides from the
-// drag-and-drop style editor so the exported/emailed PNG matches exactly
-// what was shown and confirmed in the live preview.
-function buildFrontTextCardImage(cb) {
-    const isPortrait = state.design_spec.front_orientation === 'portrait';
-    const W = isPortrait ? 548 : 960, H = isPortrait ? 960 : 548;
-    const canvas = document.createElement('canvas');
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext('2d');
-
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, W, H);
-
-    const ds = state.design_spec;
-    const styles = ds.front_field_styles || {};
-    const scaleFactor = W / 480;
-
-    const drawCentered = (key, text, seed) => {
-        const style = styles[key] || defaultFieldStyle('text', seed);
-        const x = (style.x / 100) * W;
-        const y = (style.y / 100) * H;
-        ctx.fillStyle = style.color || '#000000';
-        const weight = style.bold ? '700' : '400';
-        const styleWord = style.italic ? 'italic' : 'normal';
-        const fontPx = Math.round((style.fontSize || 16) * scaleFactor);
-        ctx.font = `${styleWord} ${weight} ${fontPx}px ${fontCssStack(style.fontFamily)}`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(text, x, y);
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'alphabetic';
-    };
-
-    if (ds.front_business_name) {
-        drawCentered('business_name', ds.front_business_name, { x: 50, y: 30, fontSize: 22, bold: true });
-    }
-    if (ds.front_tagline) {
-        drawCentered('tagline', ds.front_tagline, { x: 50, y: 45, fontSize: 14 });
-    }
-    if (ds.front_extra_type === 'social' && ds.front_social) {
-        drawCentered('extra', ds.front_social, { x: 50, y: 65, fontSize: 12 });
-    }
-
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '400 14px sans-serif';
-    ctx.fillText('3.5" x 2.0"', W - 130, H - 30);
-
-    if (ds.front_extra_type === 'qr' && ds.front_qr_image) {
-        const style = styles.extra || defaultFieldStyle('image', { x: 50, y: 68, size: 60 });
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        const draw = () => {
-            try {
-                const sizePx = (style.size || 60) * scaleFactor;
-                const x = (style.x / 100) * W - sizePx / 2;
-                const y = (style.y / 100) * H - sizePx / 2;
-                ctx.drawImage(img, x, y, sizePx, sizePx);
-            } catch (e) { /* keep exporting even if the QR image can't be drawn */ }
-            cb(canvas.toDataURL('image/png'));
-        };
-        img.onload = draw;
-        img.onerror = () => cb(canvas.toDataURL('image/png'));
-        img.src = ds.front_qr_image;
-        return;
-    }
-
     cb(canvas.toDataURL('image/png'));
 }
-
 
 // Counts how many of the 12 back fields are actually filled with truthy
 // values (skips nulls/false/empty strings) — drives the compact-mode
@@ -918,12 +639,12 @@ function renderTemplateBody(templateId, c, compact) {
         let h = '';
         if (c.name) h += `<div data-field="name" style="font-weight:700;font-size:${nameSz};color:#0f172a;margin-bottom:2px;">${esc(c.name)}</div>`;
         if (c.title) h += `<div data-field="title" style="color:#64748b;font-size:${bodySz};margin-bottom:2px;">${esc(c.title)}</div>`;
-        if (c.company) h += `<div data-field="company" style="color:#000;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
+        if (c.company) h += `<div data-field="company" style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>`;
         return h;
     };
     const extras = () => {
         let e = '';
-        if (c.tagline) e += `<div data-field="tagline" style="margin-top:${gapTop};font-size:${bodySz};font-style:italic;color:#000;">“${esc(c.tagline)}”</div>`;
+        if (c.tagline) e += `<div data-field="tagline" style="margin-top:${gapTop};font-size:${bodySz};font-style:italic;color:#475569;">“${esc(c.tagline)}”</div>`;
         if (c.services) e += `<div data-field="services" style="margin-top:6px;font-size:${bodySz};color:#64748b;">${esc(c.services)}</div>`;
         if (c.cta) e += `<div data-field="cta" style="margin-top:${gapTop};font-size:${bodySz};font-weight:600;color:#0f172a;">${esc(c.cta)}</div>`;
         return e;
@@ -937,7 +658,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c);
             return `<div style="text-align:center;">
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:10px;display:flex;justify-content:center;">${backImageHTML(c, 60)}</div>` : ''}
             </div>`;
@@ -946,7 +667,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c, { icons: { phone: '📞', email: '✉️', website: '🌐', address: '📍', social: '👤' } });
             return `<div>
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.7;color:#000;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.7;color:#334155;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:10px;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -956,7 +677,7 @@ function renderTemplateBody(templateId, c, compact) {
             return `<div style="display:flex;gap:12px;height:100%;">
                 <div style="flex:1;border-right:1px solid #e2e8f0;padding-right:12px;">
                     ${header()}
-                    ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
+                    ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
                     ${extras()}
                 </div>
                 <div style="width:70px;display:flex;align-items:center;justify-content:center;">
@@ -971,8 +692,8 @@ function renderTemplateBody(templateId, c, compact) {
                     ${c.name ? `<div style="font-weight:700;font-size:${nameSz};">${esc(c.name)}</div>` : ''}
                     ${c.title ? `<div style="font-size:${bodySz};opacity:.85;">${esc(c.title)}</div>` : ''}
                 </div>
-                ${c.company ? `<div style="color:#000;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>` : ''}
-                ${lines ? `<div style="font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
+                ${c.company ? `<div style="color:#334155;font-size:${bodySz};font-weight:600;margin-bottom:6px;">${esc(c.company)}</div>` : ''}
+                ${lines ? `<div style="font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:8px;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -981,7 +702,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c);
             return `<div style="border:2px solid #cbd5e1;border-radius:8px;padding:10px;height:calc(100% - 20px);text-align:center;">
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#000;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.6;color:#334155;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:8px;display:flex;justify-content:center;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -991,7 +712,7 @@ function renderTemplateBody(templateId, c, compact) {
             return `<div style="height:100%;display:flex;flex-direction:column;justify-content:flex-end;">
                 ${c.back_image ? `<div style="margin-bottom:8px;">${backImageHTML(c, 50)}</div>` : ''}
                 ${header()}
-                ${lines ? `<div style="font-size:${bodySz};line-height:1.5;color:#000;">${lines}</div>` : ''}
+                ${lines ? `<div style="font-size:${bodySz};line-height:1.5;color:#334155;">${lines}</div>` : ''}
                 ${extras()}
             </div>`;
         }
@@ -1001,7 +722,7 @@ function renderTemplateBody(templateId, c, compact) {
                 ${c.back_image ? backImageHTML(c, 90) : '<div style="width:70px;height:70px;border:2px dashed #cbd5e1;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:0.68rem;color:#94a3b8;">QR</div>'}
                 <div style="margin-top:8px;">
                     ${c.name ? `<div style="font-weight:700;font-size:${bodySz};color:#0f172a;">${esc(c.name)}</div>` : ''}
-                    ${lines ? `<div style="font-size:${bodySz};color:#000;">${lines}</div>` : ''}
+                    ${lines ? `<div style="font-size:${bodySz};color:#334155;">${lines}</div>` : ''}
                 </div>
             </div>`;
         }
@@ -1010,7 +731,7 @@ function renderTemplateBody(templateId, c, compact) {
             const lines = contactLines(c);
             return `<div>
                 ${header()}
-                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.5;color:#000;">${lines}</div>` : ''}
+                ${lines ? `<div style="margin-top:${gapTop};font-size:${bodySz};line-height:1.5;color:#334155;">${lines}</div>` : ''}
                 ${extras()}
                 ${c.back_image ? `<div style="margin-top:10px;">${backImageHTML(c, 50)}</div>` : ''}
             </div>`;
@@ -1046,312 +767,7 @@ function renderBackCardHTML(ds) {
         </div>`;
 }
 
-function renderFrontCardHTML(ds) {
-    const hasContent = ds.front_business_name || ds.front_tagline || ds.front_social || ds.front_qr_image;
-    if (!hasContent) {
-        return `
-            <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
-                <div>
-                    <h2 style="font-size:1.2rem;font-weight:700;">Front</h2>
-                    <p style="font-size:0.8rem;color:#475569;margin-top:8px;">${esc(ds.front_layout || 'Building your text-only front...')}</p>
-                </div>
-                <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;">3.5″ × 2.0″</div>
-            </div>`;
-    }
-
-    let extraHTML = '';
-    if (ds.front_extra_type === 'social' && ds.front_social) {
-        extraHTML = `<p style="font-size:0.78rem;color:#000;margin-top:12px;">${esc(ds.front_social)}</p>`;
-    } else if (ds.front_extra_type === 'qr' && ds.front_qr_image) {
-        extraHTML = `<div style="margin-top:12px;"><img src="${ds.front_qr_image}" style="width:60px;height:60px;object-fit:contain;" alt="QR code"></div>`;
-    }
-
-    return `
-        <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
-            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
-                ${ds.front_business_name ? `<h2 style="font-size:1.4rem;font-weight:700;margin:0;color:#000;">${esc(ds.front_business_name)}</h2>` : ''}
-                ${ds.front_tagline ? `<p style="font-size:0.85rem;color:#000;margin:6px 0 0;">${esc(ds.front_tagline)}</p>` : ''}
-                ${extraHTML}
-            </div>
-            <div style="font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;">3.5″ × 2.0″</div>
-        </div>`;
-}
-
-// ---------------------------------------------------------------------------
-// CLICKABLE STYLE EDITOR (Phase 15) — once all content for a side is
-// confirmed (front_stage === 'done' for the front, back_complete === true
-// for the back), the preview switches from the static flow-layout renderers
-// above to this absolute-positioned, drag-and-click-to-style version. Every
-// field becomes its own element the customer can drag anywhere on the card,
-// or click once (without dragging) to open a small toolbar with font size,
-// color, bold/italic, font family (text fields) or a size slider (image/QR
-// fields). Style/position choices are stored per-field in
-// design_spec.front_field_styles / back_field_styles and travel with the
-// state exactly like every other field.
-// ---------------------------------------------------------------------------
-
-const EDITOR_FONT_FAMILIES = [
-    { id: 'sans',   label: 'Clean Sans-Serif', css: "'Helvetica Neue', Arial, sans-serif" },
-    { id: 'serif',  label: 'Classic Serif',     css: "Georgia, 'Times New Roman', serif" },
-    { id: 'modern', label: 'Modern',            css: "'Segoe UI', 'Poppins', sans-serif" },
-    { id: 'script', label: 'Elegant Script',    css: "'Brush Script MT', 'Segoe Script', cursive" },
-];
-
-function fontCssStack(id) {
-    const found = EDITOR_FONT_FAMILIES.find(f => f.id === id);
-    return found ? found.css : EDITOR_FONT_FAMILIES[0].css;
-}
-
-function defaultFieldStyle(kind, seed) {
-    seed = seed || {};
-    if (kind === 'image') {
-        return { x: seed.x != null ? seed.x : 50, y: seed.y != null ? seed.y : 50, size: seed.size || 60 };
-    }
-    return {
-        x: seed.x != null ? seed.x : 50,
-        y: seed.y != null ? seed.y : 50,
-        fontSize: seed.fontSize || 16,
-        color: seed.color || '#000000',
-        bold: !!seed.bold,
-        italic: !!seed.italic,
-        fontFamily: seed.fontFamily || 'sans',
-    };
-}
-
-// Fills in a default style/position for `key` only if one doesn't already
-// exist — never overwrites a position the customer has already dragged.
-function ensureFieldStyle(styleDict, key, kind, seed) {
-    if (!styleDict[key]) {
-        styleDict[key] = defaultFieldStyle(kind, seed);
-    }
-    return styleDict[key];
-}
-
-function editableFieldHTML(field, kind, style, textOrSrc, altLabel) {
-    if (kind === 'image') {
-        return `<img class="editable-field image-field" data-field="${field}" data-kind="image"
-            src="${textOrSrc}" alt="${altLabel || ''}"
-            style="position:absolute;left:${style.x}%;top:${style.y}%;width:${style.size}px;height:${style.size}px;
-            object-fit:contain;transform:translate(-50%,-50%);cursor:move;">`;
-    }
-    return `<div class="editable-field" data-field="${field}" data-kind="text"
-        style="position:absolute;left:${style.x}%;top:${style.y}%;transform:translate(-50%,-50%);
-        font-size:${style.fontSize}px;color:${style.color};font-weight:${style.bold ? '700' : '400'};
-        font-style:${style.italic ? 'italic' : 'normal'};font-family:${fontCssStack(style.fontFamily)};
-        cursor:move;white-space:nowrap;">${esc(textOrSrc)}</div>`;
-}
-
-function renderFrontCardEditableHTML(ds) {
-    const styles = ds.front_field_styles;
-    let fields = '';
-
-    if (ds.front_business_name) {
-        const style = ensureFieldStyle(styles, 'business_name', 'text', { x: 50, y: 30, fontSize: 22, bold: true });
-        fields += editableFieldHTML('business_name', 'text', style, ds.front_business_name);
-    }
-    if (ds.front_tagline) {
-        const style = ensureFieldStyle(styles, 'tagline', 'text', { x: 50, y: 45, fontSize: 14 });
-        fields += editableFieldHTML('tagline', 'text', style, ds.front_tagline);
-    }
-    if (ds.front_extra_type === 'social' && ds.front_social) {
-        const style = ensureFieldStyle(styles, 'extra', 'text', { x: 50, y: 65, fontSize: 12 });
-        fields += editableFieldHTML('extra', 'text', style, ds.front_social);
-    } else if (ds.front_extra_type === 'qr' && ds.front_qr_image) {
-        const style = ensureFieldStyle(styles, 'extra', 'image', { x: 50, y: 68, size: 60 });
-        fields += editableFieldHTML('extra', 'image', style, ds.front_qr_image, 'QR code');
-    }
-
-    return `
-        <div style="position:relative;height:100%;">
-            ${fields}
-            <div style="position:absolute;left:0;right:0;bottom:0;font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;">3.5″ × 2.0″</div>
-        </div>`;
-}
-
-// Simplified back-side editable layout: rather than trying to preserve the
-// exact geometry of all 8 chosen templates once dragging is possible, every
-// answered field gets its own draggable element seeded in a sensible
-// top-to-bottom stack (matching the order fields were asked in) as a
-// starting point — the customer can then drag anything anywhere.
-function renderBackCardEditableHTML(ds) {
-    const c = ds.contact || {};
-    const styles = ds.back_field_styles;
-    const orderedKeys = ['name', 'title', 'company', 'phone', 'email', 'website', 'address', 'social', 'tagline', 'services', 'cta'];
-    let fields = '';
-    let row = 0;
-
-    orderedKeys.forEach(key => {
-        const val = c[key];
-        if (!val) return;
-        const style = ensureFieldStyle(styles, key, 'text', { x: 22, y: 12 + row * 9, fontSize: 16 });
-        fields += editableFieldHTML(key, 'text', style, val);
-        row++;
-    });
-
-    if (c.back_image) {
-        const style = ensureFieldStyle(styles, 'image', 'image', { x: 80, y: 78, size: 70 });
-        fields += editableFieldHTML('image', 'image', style, c.back_image, c.back_image_kind === 'qr' ? 'QR code' : 'image');
-    }
-
-    return `
-        <div style="position:relative;height:100%;">
-            ${fields}
-            <div style="position:absolute;left:0;right:0;bottom:0;font-size:0.72rem;color:#64748b;border-top:1px solid #eee;padding-top:8px;display:flex;justify-content:space-between;">
-                <span>Studio Spec</span>
-                <span style="font-weight:600;">3.5″ × 2.0″</span>
-            </div>
-        </div>`;
-}
-
-function closeFieldToolbar() {
-    const existing = document.getElementById('fieldToolbar');
-    if (existing) existing.remove();
-}
-
-function applyFieldStyleToElement(el, kind, style) {
-    el.style.left = style.x + '%';
-    el.style.top = style.y + '%';
-    if (kind === 'image') {
-        el.style.width = style.size + 'px';
-        el.style.height = style.size + 'px';
-    } else {
-        el.style.fontSize = style.fontSize + 'px';
-        el.style.color = style.color;
-        el.style.fontWeight = style.bold ? '700' : '400';
-        el.style.fontStyle = style.italic ? 'italic' : 'normal';
-        el.style.fontFamily = fontCssStack(style.fontFamily);
-    }
-}
-
-function openFieldToolbar(el, ds, styleKey, field) {
-    closeFieldToolbar();
-    const style = ds[styleKey][field];
-    const kind = el.dataset.kind;
-    const rect = el.getBoundingClientRect();
-
-    const toolbar = document.createElement('div');
-    toolbar.id = 'fieldToolbar';
-    toolbar.style.cssText =
-        'position:fixed;z-index:1000;background:#1e293b;border:1px solid #334155;border-radius:8px;' +
-        'padding:12px;display:flex;flex-direction:column;gap:8px;font-size:0.78rem;color:#f8fafc;' +
-        'min-width:190px;box-shadow:0 10px 25px rgba(0,0,0,.45);';
-    toolbar.style.left = Math.min(rect.left, window.innerWidth - 220) + 'px';
-    toolbar.style.top = Math.min(rect.bottom + 8, window.innerHeight - 260) + 'px';
-
-    if (kind === 'image') {
-        toolbar.innerHTML = `
-            <label>Size
-                <input type="range" id="tbSize" min="30" max="180" value="${style.size}">
-            </label>
-            <button id="tbClose">Done</button>`;
-    } else {
-        toolbar.innerHTML = `
-            <label>Font size
-                <input type="range" id="tbFontSize" min="8" max="40" value="${style.fontSize}">
-            </label>
-            <label>Color
-                <input type="color" id="tbColor" value="${style.color}">
-            </label>
-            <div style="display:flex;gap:6px;">
-                <button id="tbBold" style="flex:1;font-weight:700;${style.bold ? 'background:#38bdf8;color:#0f172a;border-color:#38bdf8;' : ''}">B</button>
-                <button id="tbItalic" style="flex:1;font-style:italic;${style.italic ? 'background:#38bdf8;color:#0f172a;border-color:#38bdf8;' : ''}">I</button>
-            </div>
-            <label>Font
-                <select id="tbFont">
-                    ${EDITOR_FONT_FAMILIES.map(f => `<option value="${f.id}" ${style.fontFamily === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
-                </select>
-            </label>
-            <button id="tbClose">Done</button>`;
-    }
-
-    document.body.appendChild(toolbar);
-
-    if (kind === 'image') {
-        document.getElementById('tbSize').addEventListener('input', (e) => {
-            style.size = parseInt(e.target.value, 10);
-            applyFieldStyleToElement(el, kind, style);
-        });
-    } else {
-        document.getElementById('tbFontSize').addEventListener('input', (e) => {
-            style.fontSize = parseInt(e.target.value, 10);
-            applyFieldStyleToElement(el, kind, style);
-        });
-        document.getElementById('tbColor').addEventListener('input', (e) => {
-            style.color = e.target.value;
-            applyFieldStyleToElement(el, kind, style);
-        });
-        document.getElementById('tbBold').addEventListener('click', () => {
-            style.bold = !style.bold;
-            applyFieldStyleToElement(el, kind, style);
-            openFieldToolbar(el, ds, styleKey, field);
-        });
-        document.getElementById('tbItalic').addEventListener('click', () => {
-            style.italic = !style.italic;
-            applyFieldStyleToElement(el, kind, style);
-            openFieldToolbar(el, ds, styleKey, field);
-        });
-        document.getElementById('tbFont').addEventListener('change', (e) => {
-            style.fontFamily = e.target.value;
-            applyFieldStyleToElement(el, kind, style);
-        });
-    }
-    document.getElementById('tbClose').addEventListener('click', closeFieldToolbar);
-}
-
-// Generic pointer-based drag for a card's editable fields — works with
-// mouse and touch alike. Distinguishes a click (open the style toolbar)
-// from a drag (reposition only) by movement distance.
-function setupFieldDragging(card, ds, styleKey) {
-    card.querySelectorAll('.editable-field').forEach(el => {
-        const field = el.dataset.field;
-        const kind = el.dataset.kind;
-
-        const onPointerDown = (e) => {
-            e.preventDefault();
-            closeFieldToolbar();
-            const point = e.touches ? e.touches[0] : e;
-            const startX = point.clientX, startY = point.clientY;
-            const cardRect = card.getBoundingClientRect();
-            const style = ds[styleKey][field];
-            const origX = style.x, origY = style.y;
-            let moved = false;
-
-            const onMove = (e2) => {
-                const p2 = e2.touches ? e2.touches[0] : e2;
-                const dx = p2.clientX - startX, dy = p2.clientY - startY;
-                if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-                if (!moved) return;
-                let newX = origX + (dx / cardRect.width) * 100;
-                let newY = origY + (dy / cardRect.height) * 100;
-                newX = Math.max(2, Math.min(98, newX));
-                newY = Math.max(2, Math.min(98, newY));
-                style.x = newX;
-                style.y = newY;
-                el.style.left = newX + '%';
-                el.style.top = newY + '%';
-            };
-            const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                document.removeEventListener('touchmove', onMove);
-                document.removeEventListener('touchend', onUp);
-                if (!moved) {
-                    openFieldToolbar(el, ds, styleKey, field);
-                }
-            };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-            document.addEventListener('touchmove', onMove, { passive: false });
-            document.addEventListener('touchend', onUp);
-        };
-
-        el.addEventListener('mousedown', onPointerDown);
-        el.addEventListener('touchstart', onPointerDown, { passive: false });
-    });
-}
-
 function render() {
-    closeFieldToolbar();
     updateSidesUI();
     const card = document.getElementById('cardPreview');
     const ds = state.design_spec;
@@ -1379,12 +795,7 @@ function render() {
     card.style.background = '#ffffff';
 
     if (state.activeSide === 'front') {
-        if (ds.image_declined && ds.front_stage === 'done') {
-            card.innerHTML = renderFrontCardEditableHTML(ds);
-            setupFieldDragging(card, ds, 'front_field_styles');
-            return;
-        }
-        card.innerHTML = ds.image_declined ? renderFrontCardHTML(ds) : `
+        card.innerHTML = `
             <div style="display:flex;flex-direction:column;height:100%;justify-content:space-between;">
                 <div>
                     <h2 style="font-size:1.2rem;font-weight:700;">Front</h2>
@@ -1396,12 +807,6 @@ function render() {
     }
 
     // BACK SIDE
-    if (ds.back_complete) {
-        card.innerHTML = renderBackCardEditableHTML(ds);
-        setupFieldDragging(card, ds, 'back_field_styles');
-        highlightChangedBackFields(ds.contact || {});
-        return;
-    }
     card.innerHTML = renderBackCardHTML(ds);
     highlightChangedBackFields(ds.contact || {});
 }
@@ -1531,37 +936,6 @@ function appendBackImageUploadPrompt() {
         reader.onload = ev => {
             state.design_spec.contact.back_image = ev.target.result;
             state.design_spec.contact.back_image_kind = 'upload';
-            wrap.remove();
-            render();
-            appendMessage('agent', 'Image received!');
-            callAgent("I've uploaded the image.");
-        };
-        reader.readAsDataURL(file);
-    });
-}
-
-// Same idea as appendBackImageUploadPrompt, but for the front-side QR
-// sub-flow (customer already has their own QR image to upload rather
-// than having one generated from a URL).
-function appendFrontImageUploadPrompt() {
-    const box = document.getElementById('chatMessages');
-    const wrap = document.createElement('div');
-    wrap.className = 'template-picker';
-    const inputId = 'frontQrUpload_' + Date.now();
-    wrap.innerHTML = `
-        <label class="template-btn" for="${inputId}">
-            <span class="template-icon">📎</span>Upload Image
-        </label>
-        <input type="file" id="${inputId}" accept="image/*"
-               style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">`;
-    box.appendChild(wrap);
-    box.scrollTop = box.scrollHeight;
-    document.getElementById(inputId).addEventListener('change', e => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = ev => {
-            state.design_spec.front_qr_image = ev.target.result;
             wrap.remove();
             render();
             appendMessage('agent', 'Image received!');
@@ -1747,8 +1121,6 @@ async function callAgent(text) {
             appendCapacitySuggestions(state.design_spec.capacity_suggestions);
         } else if (data.awaiting_gate === 'qr_image_upload') {
             appendBackImageUploadPrompt();
-        } else if (data.awaiting_gate === 'front_qr_image_upload') {
-            appendFrontImageUploadPrompt();
         }
 
         render();
@@ -1808,13 +1180,6 @@ function downloadCard() {
             a.href = url;
             a.click();
         });
-    } else if (state.activeSide === 'front' && state.design_spec.image_declined) {
-        buildFrontTextCardImage((url) => {
-            const a = document.createElement('a');
-            a.download = 'business-card-front.png';
-            a.href = url;
-            a.click();
-        });
     } else if (state.activeSide === 'back') {
         buildBackCardImage((url) => {
             const a = document.createElement('a');
@@ -1828,6 +1193,3 @@ function downloadCard() {
 }
 
 render();
-</script>
-</body>
-</html>

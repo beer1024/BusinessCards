@@ -556,6 +556,96 @@ def _clean_qr_url(text):
     return candidate
 
 
+def _qr_image_url(cleaned_url):
+    """Builds the actual scannable QR code image URL from an already-cleaned
+    target URL (see _clean_qr_url)."""
+    return (
+        "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data="
+        + urllib.parse.quote(cleaned_url, safe="")
+    )
+
+
+def _maybe_generate_qr_from_value(value):
+    """If `value` (text the AI already extracted from the customer's
+    message) looks like a usable URL, returns (cleaned_url, qr_image_url);
+    otherwise returns (None, None). Used so a customer who names a URL
+    directly (e.g. answering "qr code, coffeeshop.com" in one message) can
+    skip the separate "what URL?" follow-up entirely."""
+    if not value:
+        return None, None
+    cleaned = _clean_qr_url(value)
+    if not cleaned:
+        return None, None
+    return cleaned, _qr_image_url(cleaned)
+
+
+# ---------------------------------------------------------------------------
+# AI-assisted interpretation of the QR/image sub-flow's opening question,
+# shared by both the back side's handle_qr_subflow and the front checklist's
+# qr_source stage (they ask the exact same question). Same pattern as the
+# rest of the app: the AI classifies intent (and, as a bonus, recognizes when
+# the customer already gave the URL directly instead of saying "generate"
+# first), Python owns every resulting state change, and a deterministic
+# keyword fallback is used if the AI call is ever unavailable.
+# ---------------------------------------------------------------------------
+
+QR_SUBFLOW_INTENT_SYSTEM_PROMPT = """
+You are the intent classifier for a single question in a business card
+design tool: "%s"
+
+Respond with ONLY this JSON shape, nothing else:
+{
+  "intent": "upload" | "generate" | "skip" | "off_topic",
+  "url": "",
+  "reply_to_user": ""
+}
+
+Rules:
+- "upload": the customer already has an image/logo/file ready to upload, in
+  any wording ("I have one", "got a logo", "I'll upload it", "have a file").
+  Leave "url" empty.
+- "generate": the customer wants a QR code generated from a URL/website --
+  including when they just directly give you the URL/website itself instead
+  of explicitly saying "generate" first (e.g. "coffeeshop.com", "my website
+  is coffeeshop.com", "use https://example.com", "from my url"). Put
+  whatever URL/website text they gave (if any) into "url", cleaned of filler
+  words and surrounding punctuation. If they only said something like
+  "generate one" / "from a url" with no actual URL yet, leave "url" empty.
+- "skip": they don't want a QR code or image at all ("no", "skip", "none",
+  "not needed").
+- "off_topic": anything else -- a question, confusion, or unrelated
+  chatter. Write a short, friendly "reply_to_user" that briefly addresses
+  it, then ends by re-asking the original question verbatim: "%s". Do not
+  guess in this case.
+""" % (QR_SOURCE_QUESTION, QR_SOURCE_QUESTION)
+
+
+def interpret_qr_subflow_reply(user_message):
+    if not client:
+        raise RuntimeError("GROQ_API_KEY is missing or empty")
+
+    messages = [
+        {"role": "system", "content": QR_SUBFLOW_INTENT_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Customer: {user_message}"},
+    ]
+
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+        timeout=15,
+    )
+
+    raw = completion.choices[0].message.content.strip()
+    result = json.loads(raw)
+
+    if result.get("intent") not in {"upload", "generate", "skip", "off_topic"}:
+        raise ValueError("Model returned an unrecognized intent")
+
+    return result
+
+
 def start_qr_subflow(contact):
     update = {
         "contact": contact,
@@ -568,7 +658,11 @@ def start_qr_subflow(contact):
     return QR_SOURCE_QUESTION, update
 
 
-def handle_qr_subflow(user_message, current_spec):
+def handle_qr_subflow_deterministic(user_message, current_spec):
+    """Deterministic keyword-based fallback — used only if the AI
+    interpretation call fails (bad JSON, network error, timeout, missing
+    API key). Kept intact so the flow still works if the API has a
+    hiccup."""
     contact = dict(current_spec.get("contact", {}) or {})
     stage = current_spec.get("pending_stage")
     back_template = current_spec.get("back_template")
@@ -593,6 +687,15 @@ def handle_qr_subflow(user_message, current_spec):
             return _stay("qr_awaiting_upload", "Great — go ahead and upload your image whenever you're ready.")
         if any(w in lower for w in GENERATE_QR_WORDS):
             return _stay("qr_url", QR_URL_QUESTION)
+        # Bonus heavy-lifting even without the AI: if the message is itself
+        # a usable URL, treat that as "generate from this URL" directly
+        # rather than making the customer repeat it after choosing.
+        cleaned, qr_image = _maybe_generate_qr_from_value(user_message)
+        if cleaned:
+            contact["back_image"] = qr_image
+            contact["back_image_kind"] = "qr"
+            reply, update = finish_or_advance(contact, back_template)
+            return f"Done — I generated a QR code linking to {cleaned}.\n\n{reply}", update
         return _stay("qr_source", QR_SOURCE_QUESTION)
 
     if stage == "qr_awaiting_upload":
@@ -604,16 +707,69 @@ def handle_qr_subflow(user_message, current_spec):
         url = _clean_qr_url(user_message)
         if not url:
             return _stay("qr_url", "I didn't catch a web address there — what URL should the QR code link to?")
-        contact["back_image"] = (
-            "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data="
-            + urllib.parse.quote(url, safe="")
-        )
+        contact["back_image"] = _qr_image_url(url)
         contact["back_image_kind"] = "qr"
         reply, update = finish_or_advance(contact, back_template)
         return f"Done — I generated a QR code linking to {url}.\n\n{reply}", update
 
     # Safety net — shouldn't normally be reached.
     return finish_or_advance(contact, back_template)
+
+
+def handle_qr_subflow(user_message, current_spec):
+    """AI-assisted front door for the qr_source stage (recognizes a direct
+    "yes, and here's the value" answer, including a bare URL). All other
+    stages (qr_awaiting_upload, qr_url) stay deterministic-only, same as
+    before, since their vocabulary is narrow enough to not need it. Any AI
+    failure falls back to the fully deterministic handler."""
+    stage = current_spec.get("pending_stage")
+    if stage != "qr_source":
+        return handle_qr_subflow_deterministic(user_message, current_spec)
+
+    contact = dict(current_spec.get("contact", {}) or {})
+    back_template = current_spec.get("back_template")
+
+    try:
+        result = interpret_qr_subflow_reply(user_message)
+    except Exception as e:
+        print(f"QR sub-flow AI interpretation failed, using fallback: {e}")
+        return handle_qr_subflow_deterministic(user_message, current_spec)
+
+    intent = result.get("intent")
+
+    if intent == "skip":
+        contact["qr_code"] = False
+        return finish_or_advance(contact, back_template)
+
+    if intent == "upload":
+        update = {
+            "contact": contact, "pending_field": "qr_code",
+            "pending_stage": "qr_awaiting_upload", "pending_value": None,
+            "back_complete": False, "capacity_check_pending": False,
+        }
+        return "Great — go ahead and upload your image whenever you're ready.", update
+
+    if intent == "generate":
+        cleaned, qr_image = _maybe_generate_qr_from_value(result.get("url"))
+        if cleaned:
+            contact["back_image"] = qr_image
+            contact["back_image_kind"] = "qr"
+            reply, update = finish_or_advance(contact, back_template)
+            return f"Done — I generated a QR code linking to {cleaned}.\n\n{reply}", update
+        update = {
+            "contact": contact, "pending_field": "qr_code",
+            "pending_stage": "qr_url", "pending_value": None,
+            "back_complete": False, "capacity_check_pending": False,
+        }
+        return QR_URL_QUESTION, update
+
+    # off_topic
+    update = {
+        "contact": contact, "pending_field": "qr_code",
+        "pending_stage": "qr_source", "pending_value": None,
+        "back_complete": False, "capacity_check_pending": False,
+    }
+    return (result.get("reply_to_user") or QR_SOURCE_QUESTION), update
 
 
 def handle_back_side_deterministic(user_message, current_spec):
@@ -1353,7 +1509,10 @@ def start_front_checklist():
     return reply, update
 
 
-def handle_front_checklist(user_message, current_spec):
+def handle_front_checklist_deterministic(user_message, current_spec):
+    """Deterministic keyword-based fallback — used only if the AI
+    interpretation call fails. Kept intact (unchanged logic) so the flow
+    still works if the API has a hiccup or no key is configured."""
     spec = dict(current_spec)
     stage = spec.get("front_stage")
     lower = user_message.lower().strip(" .!")
@@ -1456,6 +1615,277 @@ def handle_front_checklist(user_message, current_spec):
     spec["front_stage"] = "business_name_gate"
     return FRONT_BUSINESS_NAME_QUESTION, spec
 
+
+# ---------------------------------------------------------------------------
+# AI-assisted interpretation of front checklist replies. Same pattern as
+# interpret_back_reply: the AI reads the customer's message in context of
+# the exact stage/question they were just asked and classifies it — most
+# importantly, recognizing "yes, and here's the actual answer" in a single
+# message (e.g. "better by design" answering a yes/no tagline gate, or "qr
+# code" answering a yes/no extra-field gate) instead of requiring a bare
+# yes/no first. Python still owns every state transition below; the AI only
+# classifies intent and extracts a cleaned value. Falls back to the fully
+# deterministic handler above on any failure.
+# ---------------------------------------------------------------------------
+
+FRONT_CHECKLIST_QUESTION_BY_STAGE = {
+    "business_name_gate": FRONT_BUSINESS_NAME_QUESTION,
+    "business_name_text": FRONT_BUSINESS_NAME_TEXT_QUESTION,
+    "tagline_gate": FRONT_TAGLINE_QUESTION,
+    "tagline_text": FRONT_TAGLINE_TEXT_QUESTION,
+    "extra_gate": FRONT_EXTRA_QUESTION,
+    "extra_choice": FRONT_EXTRA_CHOICE_QUESTION,
+    "social_text": FRONT_SOCIAL_TEXT_QUESTION,
+}
+
+FRONT_CHECKLIST_INTENT_SYSTEM_PROMPT = """
+You are the intent classifier for a short, closed-ended checklist that
+collects the content for a text-only business card front: business name,
+then an optional tagline, then optional social handles or a QR code. You do
+NOT decide what happens next -- a separate system controls that. Your only
+job is to read the customer's most recent message and classify what they
+meant, given the exact stage and question they were just asked.
+
+You will receive context as JSON: {"stage": ..., "question_asked": ...}
+
+stage is one of:
+- "business_name_gate": yes/no question asking if they want a business name
+  on the front at all. They may answer with a bare yes/no, OR they may skip
+  straight to giving the actual business name in the same message.
+- "business_name_text": a direct request for the business name text.
+- "tagline_gate": yes/no question asking if they want a tagline/slogan.
+  Same as business_name_gate -- they may give the actual tagline directly.
+- "tagline_text": a direct request for the tagline text.
+- "extra_gate": yes/no question asking if they want social handles or a QR
+  code on the front. They may answer bare yes/no, OR name their choice
+  directly ("qr code", "just my instagram handle", etc), which both
+  answers yes AND picks the option in one message.
+- "extra_choice": a direct choice between exactly two named options: social
+  media handles, or a QR code. They may also add extra content in the same
+  message (e.g. "social, it's @mybiz" or "qr code, from my website
+  coffeeshop.com").
+- "social_text": a direct request for the social media handle(s) text.
+
+Respond with ONLY this JSON shape, nothing else:
+{
+  "intent": "provide_value" | "skip" | "choose_social" | "choose_qr" | "off_topic",
+  "value": "",
+  "reply_to_user": ""
+}
+
+Rules:
+- "provide_value": use for business_name_text, tagline_text, social_text
+  stages whenever the customer supplied real content -- put the CLEANED
+  value in "value" (strip filler like "it's called", surrounding quotes).
+  ALSO use "provide_value" for business_name_gate / tagline_gate when they
+  gave the actual name/tagline directly instead of a bare "yes" -- put that
+  content in "value" too.
+- A bare "yes" with NO actual content yet (business_name_gate, tagline_gate,
+  or extra_gate) should be classified as "provide_value" with "value" left
+  EMPTY -- the calling code treats an empty value on these gate stages as
+  "yes, now ask for the details."
+- "skip": the customer doesn't want this field at all, in any wording
+  ("no", "skip", "not needed", "we're good without it"). Valid for
+  business_name_gate, tagline_gate, and extra_gate. Leave "value" empty.
+- "choose_social" / "choose_qr": use for extra_gate or extra_choice when the
+  customer's choice is clear (whether or not they said "yes" first). If they
+  also gave the actual handle text, or a URL/website for the QR code, in the
+  same message, put it in "value" (cleaned). Otherwise leave "value" empty.
+- "off_topic": the customer asked a question, made small talk, or said
+  something unrelated to answering the current stage's question (e.g.
+  "what's a QR code?", random chatter, confusion). Write a short, friendly
+  "reply_to_user" that briefly addresses what they said, then ends by
+  re-asking question_asked (verbatim or near-verbatim) so the conversation
+  doesn't lose its place. Do not guess a value in this case.
+- Never fabricate a value the customer didn't actually provide. If genuinely
+  ambiguous, prefer "off_topic" over guessing.
+"""
+
+
+def interpret_front_checklist_reply(user_message, stage, question_asked):
+    if not client:
+        raise RuntimeError("GROQ_API_KEY is missing or empty")
+
+    context = {"stage": stage, "question_asked": question_asked}
+    messages = [
+        {"role": "system", "content": FRONT_CHECKLIST_INTENT_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": f"Context: {json.dumps(context)}\n\nCustomer: {user_message}",
+        },
+    ]
+
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+        timeout=15,
+    )
+
+    raw = completion.choices[0].message.content.strip()
+    result = json.loads(raw)
+
+    if result.get("intent") not in {
+        "provide_value", "skip", "choose_social", "choose_qr", "off_topic",
+    }:
+        raise ValueError("Model returned an unrecognized intent")
+
+    return result
+
+
+def handle_front_checklist(user_message, current_spec):
+    stage = current_spec.get("front_stage")
+
+    # qr_source is handled by the shared QR sub-flow interpreter (same
+    # question, same logic, used by the back side too); qr_awaiting_upload
+    # is just polling for an upload and doesn't need interpretation.
+    if stage == "qr_source":
+        spec = dict(current_spec)
+        try:
+            result = interpret_qr_subflow_reply(user_message)
+        except Exception as e:
+            print(f"Front QR sub-flow AI interpretation failed, using fallback: {e}")
+            return handle_front_checklist_deterministic(user_message, current_spec)
+
+        intent = result.get("intent")
+        if intent == "upload":
+            spec["front_stage"] = "qr_awaiting_upload"
+            return "Great — go ahead and upload your image whenever you're ready.", spec
+        if intent == "generate":
+            cleaned, qr_image = _maybe_generate_qr_from_value(result.get("url"))
+            if cleaned:
+                spec["front_qr_image"] = qr_image
+                spec["front_stage"] = "done"
+                reply = f"Done — I generated a QR code linking to {cleaned}.\n\n{FRONT_CHECKLIST_DONE_REPLY}"
+                return reply, spec
+            spec["front_stage"] = "qr_url"
+            return QR_URL_QUESTION, spec
+        if intent == "skip":
+            spec["front_extra_wanted"] = False
+            spec["front_extra_type"] = None
+            spec["front_stage"] = "done"
+            return FRONT_CHECKLIST_DONE_REPLY, spec
+        # off_topic
+        return (result.get("reply_to_user") or QR_SOURCE_QUESTION), spec
+
+    if stage not in FRONT_CHECKLIST_QUESTION_BY_STAGE:
+        # qr_awaiting_upload, done, or unknown/stale state — deterministic
+        # handler already covers these correctly.
+        return handle_front_checklist_deterministic(user_message, current_spec)
+
+    question_asked = FRONT_CHECKLIST_QUESTION_BY_STAGE[stage]
+    try:
+        result = interpret_front_checklist_reply(user_message, stage, question_asked)
+    except Exception as e:
+        print(f"Front checklist AI interpretation failed, using fallback: {e}")
+        return handle_front_checklist_deterministic(user_message, current_spec)
+
+    spec = dict(current_spec)
+    intent = result.get("intent")
+    value = (result.get("value") or "").strip()
+
+    if intent == "off_topic":
+        return (result.get("reply_to_user") or question_asked), spec
+
+    def _choose_extra(is_qr, value):
+        """Shared by extra_gate and extra_choice: applies the chosen extra
+        type, and if a usable value was already supplied in the same
+        message (a social handle, or a URL for the QR code), captures it
+        immediately instead of asking a redundant follow-up question."""
+        spec["front_extra_wanted"] = True
+        spec["front_extra_type"] = "qr" if is_qr else "social"
+        if is_qr:
+            cleaned, qr_image = _maybe_generate_qr_from_value(value)
+            if cleaned:
+                spec["front_qr_image"] = qr_image
+                spec["front_stage"] = "done"
+                return f"Done — I generated a QR code linking to {cleaned}.\n\n{FRONT_CHECKLIST_DONE_REPLY}", spec
+            spec["front_stage"] = "qr_source"
+            return QR_SOURCE_QUESTION, spec
+        if value:
+            spec["front_social"] = value
+            spec["front_stage"] = "done"
+            return FRONT_CHECKLIST_DONE_REPLY, spec
+        spec["front_stage"] = "social_text"
+        return FRONT_SOCIAL_TEXT_QUESTION, spec
+
+    if stage == "business_name_gate":
+        if intent == "skip":
+            spec["front_business_name_wanted"] = False
+            spec["front_stage"] = "tagline_gate"
+            return FRONT_TAGLINE_QUESTION, spec
+        if intent == "provide_value":
+            spec["front_business_name_wanted"] = True
+            if value:
+                spec["front_business_name"] = value
+                spec["front_stage"] = "tagline_gate"
+                return FRONT_TAGLINE_QUESTION, spec
+            spec["front_stage"] = "business_name_text"
+            return FRONT_BUSINESS_NAME_TEXT_QUESTION, spec
+        return question_asked, spec
+
+    if stage == "business_name_text":
+        if intent == "provide_value" and value:
+            spec["front_business_name"] = value
+            spec["front_stage"] = "tagline_gate"
+            return FRONT_TAGLINE_QUESTION, spec
+        return question_asked, spec
+
+    if stage == "tagline_gate":
+        if intent == "skip":
+            spec["front_tagline_wanted"] = False
+            spec["front_stage"] = "extra_gate"
+            return FRONT_EXTRA_QUESTION, spec
+        if intent == "provide_value":
+            spec["front_tagline_wanted"] = True
+            if value:
+                spec["front_tagline"] = value
+                spec["front_stage"] = "extra_gate"
+                return FRONT_EXTRA_QUESTION, spec
+            spec["front_stage"] = "tagline_text"
+            return FRONT_TAGLINE_TEXT_QUESTION, spec
+        return question_asked, spec
+
+    if stage == "tagline_text":
+        if intent == "provide_value" and value:
+            spec["front_tagline"] = value
+            spec["front_stage"] = "extra_gate"
+            return FRONT_EXTRA_QUESTION, spec
+        return question_asked, spec
+
+    if stage == "extra_gate":
+        if intent == "skip":
+            spec["front_extra_wanted"] = False
+            spec["front_stage"] = "done"
+            return FRONT_CHECKLIST_DONE_REPLY, spec
+        if intent == "choose_qr":
+            return _choose_extra(True, value)
+        if intent == "choose_social":
+            return _choose_extra(False, value)
+        if intent == "provide_value" and not value:
+            # Bare "yes" with no type chosen yet.
+            spec["front_extra_wanted"] = True
+            spec["front_stage"] = "extra_choice"
+            return FRONT_EXTRA_CHOICE_QUESTION, spec
+        return question_asked, spec
+
+    if stage == "extra_choice":
+        if intent == "choose_qr":
+            return _choose_extra(True, value)
+        if intent == "choose_social":
+            return _choose_extra(False, value)
+        return question_asked, spec
+
+    if stage == "social_text":
+        if intent == "provide_value" and value:
+            spec["front_social"] = value
+            spec["front_stage"] = "done"
+            return FRONT_CHECKLIST_DONE_REPLY, spec
+        return question_asked, spec
+
+    # Shouldn't be reached given the FRONT_CHECKLIST_QUESTION_BY_STAGE guard.
+    return handle_front_checklist_deterministic(user_message, current_spec)
 
 
 
